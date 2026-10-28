@@ -396,7 +396,8 @@ class Handler(BaseHTTPRequestHandler):
                     fixed=b.get("fixed"), fmt=b.get("fmt", "same"),
                     quality=int(b.get("quality", 92)),
                     overwrite=bool(b.get("overwrite", False)),
-                    suffix=b.get("suffix", ""), workers=int(b.get("workers", 0)))
+                    suffix=b.get("suffix", ""), workers=int(b.get("workers", 0)),
+                    dedupe=bool(b.get("dedupe", True)))
                 job = BatchJob(opts)
                 if not job.items:
                     raise ValueError("Aucune image ni vidéo dans le dossier source.")

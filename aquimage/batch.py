@@ -6,13 +6,20 @@ Options : sous-dossiers, vidéos, format de sortie, qualité JPEG, ajustements
 globaux ajoutés aux réglages automatiques (ex. +0,2 de température pour
 tout le lot), ou réglages fixes identiques pour tous les fichiers.
 
-Un rapport ``aquimage_rapport.csv`` est écrit dans la destination (réglages
-retenus, durée, erreurs).
+Un rapport ``aquimage_rapport.csv`` est écrit dans la destination au fil du
+traitement (une ligne par fichier terminé), puis réécrit complet à la fin.
+
+Sont ignorés automatiquement :
+- les doublons exacts (même taille, même contenu au début et à la fin du
+  fichier), typiquement les copies « X 2.JPG » d'un double import ;
+- les sorties d'anciens outils laissées dans la source (« _enhanced »).
 """
 from __future__ import annotations
 
 import csv
+import hashlib
 import os
+import re
 import threading
 import time
 import traceback
@@ -41,6 +48,7 @@ class BatchOptions:
     overwrite: bool = False
     suffix: str = ""
     workers: int = 0                   # 0 = automatique
+    dedupe: bool = True                # ignorer les doublons exacts
 
 
 @dataclass
@@ -85,6 +93,58 @@ def scan(src: str, recursive: bool = True, videos: bool = True) -> List[Item]:
     return items
 
 
+_OLD_OUTPUT = re.compile(r"_enhanced(\.[^.]+$|_)|_frame\d+_enhanced", re.I)
+_COPY_MARK = re.compile(r"( \d+| \(\d+\)| - (copie|copy)( \d+)?|_copy)$", re.I)
+
+
+def is_old_output(rel: str) -> bool:
+    """Sortie d'un ancien outil (AquaCol : « …_enhanced.jpg »)."""
+    return bool(_OLD_OUTPUT.search(os.path.basename(rel)))
+
+
+def file_fingerprint(path: str, block: int = 1 << 20) -> tuple:
+    """Empreinte rapide : taille + MD5 du premier et du dernier Mo."""
+    size = os.path.getsize(path)
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        h.update(f.read(block))
+        if size > 2 * block:
+            f.seek(-block, os.SEEK_END)
+            h.update(f.read(block))
+    return size, h.hexdigest()
+
+
+def find_duplicates(src: str, items: List["Item"]) -> Dict[str, str]:
+    """{rel du doublon: rel de l'original gardé}.  L'original retenu est le
+    nom sans marque de copie (« X.JPG » plutôt que « X 2.JPG »)."""
+    groups: Dict[tuple, List[str]] = {}
+    by_size: Dict[int, List[str]] = {}
+    for it in items:
+        try:
+            by_size.setdefault(os.path.getsize(os.path.join(src, it.rel)), []).append(it.rel)
+        except OSError:
+            pass
+    for size, rels in by_size.items():
+        if len(rels) < 2:
+            continue
+        for rel in rels:
+            try:
+                groups.setdefault(file_fingerprint(os.path.join(src, rel)), []).append(rel)
+            except OSError:
+                pass
+    dups: Dict[str, str] = {}
+    for rels in groups.values():
+        if len(rels) < 2:
+            continue
+        def key(r):
+            stem = os.path.splitext(os.path.basename(r))[0]
+            return (bool(_COPY_MARK.search(stem)), len(r), r)
+        keep, *others = sorted(rels, key=key)
+        for o in others:
+            dups[o] = keep
+    return dups
+
+
 def out_path(opts: BatchOptions, item: Item) -> str:
     stem, ext = os.path.splitext(item.rel)
     if item.kind == "video":
@@ -127,6 +187,10 @@ class BatchJob:
         # Ne pas retraiter la destination si elle est dans la source.
         self.items = [i for i in self.items
                       if not os.path.abspath(os.path.join(opts.src, i.rel)).startswith(dst_abs + os.sep)]
+        for it in self.items:
+            if is_old_output(it.rel):
+                it.status, it.message = "ignoré", "sortie d'un ancien outil"
+        self.duplicates = 0
         self.cancel = threading.Event()
         self.started = 0.0
         self.finished = 0.0
@@ -151,12 +215,15 @@ class BatchJob:
                 "ok": sum(1 for i in self.items if i.status == "ok"),
                 "errors": sum(1 for i in self.items if i.status == "erreur"),
                 "skipped": sum(1 for i in self.items if i.status == "ignoré"),
+                "duplicates": self.duplicates,
                 "elapsed": round(el, 1), "eta": None if eta is None else round(eta),
                 "src": self.opts.src, "dst": self.opts.dst,
                 "items": [i.to_dict() for i in self.items],
             }
 
-    def _touch(self):
+    def _touch(self, it: Optional["Item"] = None):
+        if it is not None and it.status in ("ok", "ignoré", "erreur"):
+            self._report_append(it)
         if self._on_update:
             try:
                 self._on_update(self)
@@ -172,9 +239,17 @@ class BatchJob:
         self.state = "en cours"
         self.started = time.time()
         os.makedirs(self.opts.dst, exist_ok=True)
+        if self.opts.dedupe:
+            todo = [i for i in self.items if i.status == "en attente"]
+            dups = find_duplicates(self.opts.src, todo)
+            for it in todo:
+                if it.rel in dups:
+                    it.status, it.message = "ignoré", f"doublon de {dups[it.rel]}"
+            self.duplicates = len(dups)
+        self._report_start()
         workers = self.opts.workers or max(1, min(4, (os.cpu_count() or 2) // 2))
-        images = [i for i in self.items if i.kind == "image"]
-        videos = [i for i in self.items if i.kind == "video"]
+        images = [i for i in self.items if i.kind == "image" and i.status == "en attente"]
+        videos = [i for i in self.items if i.kind == "video" and i.status == "en attente"]
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 list(pool.map(self._do_image, images))
@@ -193,7 +268,7 @@ class BatchJob:
     def _skip_existing(self, it: Item, dst: str) -> bool:
         if os.path.exists(dst) and not self.opts.overwrite:
             it.status, it.message, it.out = "ignoré", "déjà présent", dst
-            self._touch()
+            self._touch(it)
             return True
         return False
 
@@ -221,7 +296,7 @@ class BatchJob:
             it.status, it.message = "erreur", f"{type(exc).__name__}: {exc}"
             traceback.print_exc()
         it.seconds = time.time() - t0
-        self._touch()
+        self._touch(it)
 
     def _do_video(self, it: Item, workers: int) -> None:
         if self.cancel.is_set():
@@ -249,17 +324,46 @@ class BatchJob:
             it.status, it.message = "erreur", f"{type(exc).__name__}: {exc}"
             traceback.print_exc()
         it.seconds = time.time() - t0
-        self._touch()
+        self._touch(it)
+
+    # -- rapport ------------------------------------------------------------
+    _KEYS = list(Settings().to_dict().keys())
+    _HEAD = ["fichier", "type", "statut", "sortie", "secondes", "diagnostic", "message"]
+
+    def _row(self, it: "Item") -> list:
+        return ([it.rel, it.kind, it.status, it.out, f"{it.seconds:.1f}",
+                 it.diag.get("type", ""), it.message]
+                + [it.settings.get(k, "") for k in self._KEYS])
+
+    def _report_path(self) -> str:
+        return os.path.join(self.opts.dst, "aquimage_rapport.csv")
+
+    def _report_start(self) -> None:
+        """Rapport écrit dès le départ, puis complété fichier par fichier :
+        un lot interrompu garde la trace de tout ce qui a été fait."""
+        try:
+            with open(self._report_path(), "w", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f, delimiter=";")
+                w.writerow(self._HEAD + self._KEYS)
+                for it in self.items:
+                    if it.status == "ignoré":
+                        w.writerow(self._row(it))
+        except OSError:
+            pass
+
+    def _report_append(self, it: "Item") -> None:
+        try:
+            with self._lock, open(self._report_path(), "a", newline="", encoding="utf-8") as f:
+                csv.writer(f, delimiter=";").writerow(self._row(it))
+        except OSError:
+            pass
 
     def write_report(self) -> str:
-        path = os.path.join(self.opts.dst, "aquimage_rapport.csv")
-        keys = list(Settings().to_dict().keys())
+        """Rapport final complet (tous les fichiers, dans l'ordre)."""
+        path = self._report_path()
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f, delimiter=";")
-            w.writerow(["fichier", "type", "statut", "sortie", "secondes",
-                        "diagnostic", "message"] + keys)
+            w.writerow(self._HEAD + self._KEYS)
             for it in self.items:
-                w.writerow([it.rel, it.kind, it.status, it.out, f"{it.seconds:.1f}",
-                            it.diag.get("type", ""), it.message]
-                           + [it.settings.get(k, "") for k in keys])
+                w.writerow(self._row(it))
         return path

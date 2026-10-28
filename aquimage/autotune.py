@@ -75,7 +75,9 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
     if texture < 0.07:
         # Pleine eau sans sujet : ne pas étirer le bruit ni le vignetage
         scene.append("pleine eau")
-        s.stretch, s.strength, s.color = 1.4, 0.3, min(s.color, 0.6)
+        # Ni étirement, ni vibrance : sinon bleu électrique et bruit doublé
+        s.stretch, s.strength, s.color = 1.0, 0.2, min(s.color, 0.5)
+        s.vibrance, s.saturation, s.shadows = 0.0, min(s.saturation, 0.95), 0.0
 
     # 4. Part de teinte gardée dans l'eau lointaine (plan préliminaire)
     pre = core.build_plan(img, s, small=small)

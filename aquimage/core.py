@@ -70,6 +70,7 @@ class Settings:
     vibrance: float = 0.3      # renforce surtout les couleurs ternes, 0..1
     shadows: float = 0.15      # éclaircit les ombres, 0..1
     black_clip: float = 0.05   # % de pixels au noir
+    black_level: float = 0.5   # part du voile de noir retirée (1 = noir pur)
     white_clip: float = 0.2    # % de pixels au blanc (avant l'épaule)
     stretch: float = 2.5       # étirement maximal des niveaux
 
@@ -81,7 +82,7 @@ class Settings:
         "exposure": (-2.0, 2.0), "contrast": (0.0, 1.0),
         "saturation": (0.0, 2.0), "black_clip": (0.0, 5.0),
         "white_clip": (0.0, 5.0), "stretch": (1.0, 4.0),
-        "vibrance": (0.0, 1.0), "shadows": (0.0, 1.0),
+        "vibrance": (0.0, 1.0), "shadows": (0.0, 1.0), "black_level": (0.0, 1.0),
     }
 
     def clamp(self) -> "Settings":
@@ -538,7 +539,9 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     pre = float(1.0 / max(1.0, float(np.percentile(mx, 99.8))))
     enc = encode_srgb(rec * pre)
     Y = enc.reshape(-1, 3) @ LUMA_E
-    lo = float(np.percentile(Y, s.black_clip)) if s.black_clip > 0 else 0.0
+    # Point noir : on ne retire qu'une part (black_level) du « plancher » de
+    # luminance ; retirer tout donne des noirs durs et un bruit visible.
+    lo = (s.black_level * float(np.percentile(Y, s.black_clip))) if s.black_clip > 0 else 0.0
     hi = float(np.percentile(_max3(enc), 100.0 - s.white_clip))
     slope = float(min(1.0 / max(hi - lo, 1e-3), s.stretch))
     med = float(np.median(np.clip((Y - lo) * slope, 0, 1)))

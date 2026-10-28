@@ -55,7 +55,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 ## Vidéos
 
 - **Réglages stables :** ils sont estimés une fois par vidéo, sur 8 images clés, pour que la couleur ne scintille pas. Seul le voile est suivi image par image, avec un lissage dans le temps.
-- **Encodage :** H.264 avec le son d'origine (converti en AAC) et la date de prise de vue. La sortie est toujours en `.mp4`.
+- **Encodage :** H.264 (CRF 21, débit plafonné à celui de la source) avec le son d'origine (converti en AAC) et la date de prise de vue. La sortie est toujours en `.mp4`.
 - **Vitesse :** sur la machine de test (2 cœurs), un clip 1080p à 30 i/s se traite à environ 4 images par seconde. Un ordinateur à 8 cœurs ira nettement plus vite.
 
 ## Formats
@@ -108,6 +108,25 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 **Limite connue :** en eau bleue profonde, sans sujet proche, l'eau peut garder une légère teinte lavande. Le curseur Teinte vers le vert, ou « Bleu gardé » plus haut, la corrige.
 
 ## Historique
+
+### 1.2.0
+
+Suite de l'analyse complète du voyage Mer Rouge 2026 (1 061 photos uniques et vidéos).
+
+- **Doublons ignorés :** les copies identiques (« X 2.JPG », « X 2.MOV ») sont détectées par taille et empreinte, puis ignorées et notées dans le rapport (« doublon de … »). Sur ce voyage, cela représente 595 fichiers, 6,3 Go et un tiers du temps de calcul. Option « Ignorer les doublons » dans l'interface, `--garder-doublons` en ligne de commande.
+- **Anciennes sorties ignorées :** les fichiers `…_enhanced` laissés dans la source par AquaCol ne sont plus retraités.
+- **Rapport au fil de l'eau :** `aquimage_rapport.csv` est créé au démarrage et complété fichier par fichier ; un lot interrompu garde sa trace.
+- **Pleine eau :** sans étirement ni vibrance, l'eau bleue sans sujet ne vire plus au bleu électrique.
+- **Point noir adouci :** seule la moitié du voile de noir est retirée (nouveau réglage expert `black_level`). Le 1er centile de luminance passe de 29 à 23 au lieu de 12 en 1.1 ; les ombres sont moins dures.
+- **Vidéos plus légères :** CRF 21 et débit plafonné à celui de la source. DSCI0967 : 19,3 Mo au lieu de 33,5 Mo (source 31,9 Mo).
+
+| Mesure (médiane, 40 photos de mer Rouge) | Original | 1.1 | 1.2 |
+| --- | --- | --- | --- |
+| Pixels écrêtés | 0,1 % | 0,0 % | 0,0 % |
+| Point noir (1er centile) | 29 | 12 | 23 |
+| Contraste (écart-type de luminance) | 46 | 55 | 53 |
+| Contraste local | 7,4 | 9,8 | 9,3 |
+| Dominante restante | 18,5 | 5,3 | 5,5 |
 
 ### 1.1.0
 

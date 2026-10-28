@@ -196,7 +196,7 @@ const Lot = {
     const body = {
       src: $("#src").value.trim(), dst: $("#dst").value.trim(),
       recursive: $("#recursive").checked, videos: $("#videos").checked,
-      overwrite: $("#overwrite").checked, fmt: $("#fmt").value,
+      overwrite: $("#overwrite").checked, dedupe: $("#dedupe").checked, fmt: $("#fmt").value,
       quality: Number($("#quality").value), mode, adjust,
       fixed: mode === "fixe" ? Atelier.settings : null,
     };
@@ -230,7 +230,8 @@ const Lot = {
     let sum;
     if (running) sum = `${s.done} sur ${s.total} fichiers traités`;
     else if (s.state === "terminé") sum = `Terminé : ${s.ok} corrigé${s.ok > 1 ? "s" : ""}`
-      + (s.skipped ? `, ${s.skipped} déjà présent${s.skipped > 1 ? "s" : ""}` : "")
+      + (s.duplicates ? `, ${s.duplicates} doublon${s.duplicates > 1 ? "s" : ""} ignoré${s.duplicates > 1 ? "s" : ""}` : "")
+      + (s.skipped - (s.duplicates || 0) > 0 ? `, ${s.skipped - s.duplicates} autre${s.skipped - s.duplicates > 1 ? "s" : ""} ignoré${s.skipped - s.duplicates > 1 ? "s" : ""}` : "")
       + (s.errors ? `, ${s.errors} en erreur` : "") + ".";
     else if (s.state === "annulé") sum = `Arrêté après ${s.done} fichier${s.done > 1 ? "s" : ""}.`;
     else sum = `Erreur : ${s.error}`;
@@ -253,7 +254,7 @@ const Lot = {
         this.rows[i] = li;
       }
       const st = $(".st", li);
-      const LABEL = { ok: "Corrigé", "ignoré": "Déjà présent", erreur: "Erreur", "annulé": "Arrêté", "en attente": "En attente" };
+      const LABEL = { ok: "Corrigé", "ignoré": "Ignoré", erreur: "Erreur", "annulé": "Arrêté", "en attente": "En attente" };
       st.textContent = it.status === "en cours" ? `${Math.round(it.progress * 100)} %` : (LABEL[it.status] || it.status);
       st.className = "st " + ({ ok: "ok", erreur: "err", "en cours": "run", "ignoré": "skip" }[it.status] || "");
       $(".sub", li).textContent = [it.kind === "video" ? "Vidéo" : "", it.type, it.message,

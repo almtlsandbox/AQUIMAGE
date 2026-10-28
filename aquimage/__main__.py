@@ -25,6 +25,7 @@ def _cmd_lot(a) -> int:
         src=a.source, dst=a.dest, recursive=not a.sans_sous_dossiers,
         videos=not a.sans_videos, fmt=a.format, quality=a.qualite,
         overwrite=a.remplacer, suffix=a.suffixe, workers=a.workers,
+        dedupe=not a.garder_doublons,
         adjust=adjust))
     n = len(job.items)
     if not n:
@@ -50,7 +51,8 @@ def _cmd_lot(a) -> int:
         while job.state == "en cours":
             time.sleep(0.5)
     s = job.summary()
-    print(f"\n{s['ok']} corrigé(s), {s['skipped']} ignoré(s), {s['errors']} erreur(s). "
+    print(f"\n{s['ok']} corrigé(s), {s['skipped']} ignoré(s) dont {s['duplicates']} doublon(s), "
+          f"{s['errors']} erreur(s). "
           "Rapport :", os.path.join(a.dest, "aquimage_rapport.csv"))
     for it in s["items"]:
         if it["status"] == "erreur":
@@ -89,6 +91,8 @@ def main(argv=None) -> int:
     lot.add_argument("--remplacer", action="store_true", help="refaire les fichiers déjà présents")
     lot.add_argument("--suffixe", default="")
     lot.add_argument("--workers", type=int, default=0)
+    lot.add_argument("--garder-doublons", action="store_true",
+                     help="traiter aussi les copies identiques (« X 2.JPG »)")
     lot.add_argument("--ajuste", action="append", metavar="REGLAGE=VALEUR",
                      help="ajustement commun, ex. --ajuste temperature=0.2")
 

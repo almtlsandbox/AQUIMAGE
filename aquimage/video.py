@@ -5,13 +5,15 @@ Correction des vidéos.
   appliqués à toutes les images : couleur stable, pas de scintillement.
 - Cartes de transmission et de clarté recalculées à chaque image (la scène
   bouge) et lissées dans le temps.
-- Encodage H.264 (ffmpeg, preset veryfast, CRF 18) avec le son d'origine
+- Encodage H.264 (ffmpeg, preset veryfast, CRF 21, débit plafonné à celui de
+  la source) avec le son d'origine
   (réencodé en AAC) et les métadonnées (date de prise de vue).
 - Sans ffmpeg : repli sur OpenCV (MP4 sans son).
 """
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -28,6 +30,7 @@ from . import autotune, core
 from .core import Settings
 
 VIDEO_ANALYSIS_SIDE = 480
+SMOOTH = 0.6           # lissage temporel des cartes (part de l'image précédente)
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -40,6 +43,21 @@ def ffmpeg_exe() -> Optional[str]:
     except Exception:
         pass
     return shutil.which("ffmpeg")
+
+
+def source_bitrate(path: str) -> Optional[int]:
+    """Débit global de la source en kb/s (lu par ffmpeg), ou None."""
+    ff = ffmpeg_exe()
+    if not ff:
+        return None
+    try:
+        r = subprocess.run([ff, "-hide_banner", "-i", path], capture_output=True,
+                           text=True, errors="replace", timeout=30,
+                           creationflags=_NO_WINDOW)
+        m = re.search(r"bitrate:\s*(\d+)\s*kb/s", r.stderr)
+        return int(m.group(1)) if m else None
+    except Exception:
+        return None
 
 
 def probe(path: str) -> dict:
@@ -99,7 +117,7 @@ class Cancelled(Exception):
 def process_video(src: str, dst: str, settings: Settings,
                   progress: Optional[Callable[[float], None]] = None,
                   cancel: Optional[threading.Event] = None,
-                  crf: int = 18, preset: str = "veryfast",
+                  crf: int = 21, preset: str = "veryfast",
                   workers: int = 2) -> dict:
     """Corrige *src* vers *dst* (mp4) avec *settings* (déjà estimés)."""
     t0 = time.time()
@@ -128,12 +146,17 @@ def process_video(src: str, dst: str, settings: Settings,
     writer = None
     errlog = tempfile.TemporaryFile()
     if ff:
+        # Débit plafonné à celui de la source : une vidéo corrigée ne doit pas
+        # peser plus lourd que l'originale (le bruit rehaussé coûte cher).
+        kbps = source_bitrate(src)
+        rate_cap = (["-maxrate", f"{kbps}k", "-bufsize", f"{2 * kbps}k"] if kbps else [])
         cmd = [ff, "-y", "-loglevel", "error",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
                "-r", f"{fps:.6f}", "-i", "-",
                "-i", src,
                "-map", "0:v:0", "-map", "1:a?", "-map_metadata", "1",
                "-c:v", "libx264", "-preset", preset, "-crf", str(int(crf)),
+               ] + rate_cap + [
                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                "-movflags", "+faststart", "-f", "mp4", tmp_dst]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
@@ -160,7 +183,7 @@ def process_video(src: str, dst: str, settings: Settings,
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 small = core.resize_max(rgb, VIDEO_ANALYSIS_SIDE)
                 prev = core.refresh_maps(gplan, rgb, small, prev,
-                                         smooth=0.6 if prev is not None else 0.0)
+                                         smooth=SMOOTH if prev is not None else 0.0)
                 pending.append(pool.submit(core.apply_plan, rgb, prev))
                 while len(pending) > 2 * max(1, workers):
                     write(pending.popleft().result())

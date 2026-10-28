@@ -302,3 +302,69 @@ def test_jpeg_size_reasonable(tmp_path, img):
     arr, meta = fileio.read_image(str(p_in))
     fileio.save_image(str(p_out), core.enhance(arr), meta)
     assert os.path.getsize(p_out) < 2.0 * os.path.getsize(p_in)
+
+
+# ---------------------------------------------------------------- v1.2
+def test_duplicates_and_old_outputs_skipped(tmp_path, img):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    Image.fromarray(img).save(src / "DSCI0001.JPG", quality=90)
+    (src / "DSCI0001 2.JPG").write_bytes((src / "DSCI0001.JPG").read_bytes())
+    Image.fromarray(img[::-1]).save(src / "DSCI0002.JPG", quality=90)
+    Image.fromarray(img).save(src / "DSCI0003_enhanced.JPG", quality=90)
+    job = BatchJob(BatchOptions(src=str(src), dst=str(dst)))
+    job.run()
+    s = job.summary()
+    assert s["ok"] == 2 and s["duplicates"] == 1, s
+    st = {i["rel"]: (i["status"], i["message"]) for i in s["items"]}
+    assert st["DSCI0001 2.JPG"] == ("ignoré", "doublon de DSCI0001.JPG")
+    assert st["DSCI0003_enhanced.JPG"][0] == "ignoré"
+    assert not (dst / "DSCI0001 2.JPG").exists()
+    # option désactivée : la copie est traitée
+    job2 = BatchJob(BatchOptions(src=str(src), dst=str(tmp_path / "d2"), dedupe=False))
+    job2.run()
+    assert job2.summary()["ok"] == 3
+
+
+def test_report_written_during_run(tmp_path, img):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    for i in range(3):
+        Image.fromarray(np.roll(img, i * 7, axis=1)).save(src / f"p{i}.jpg", quality=90)
+    job = BatchJob(BatchOptions(src=str(src), dst=str(dst), workers=1))
+    seen = []
+    orig = job._do_image
+
+    def spy(it):
+        orig(it)
+        rep = (dst / "aquimage_rapport.csv").read_text(encoding="utf-8-sig")
+        seen.append(it.rel in rep)
+
+    job._do_image = spy
+    job.run()
+    assert all(seen) and len(seen) == 3
+
+
+def test_open_water_no_vibrance():
+    rng = np.random.default_rng(1)
+    img = np.clip(np.array([25, 60, 160], np.float32) + rng.normal(0, 3, (300, 450, 3)), 0, 255).astype(np.uint8)
+    s, diag = autotune.auto_settings(img)
+    assert "pleine eau" in diag["type"] and s.vibrance == 0 and s.stretch == 1.0
+    out = core.enhance(img, s)
+    lab_in = cv2_lab(img)
+    lab_out = cv2_lab(out)
+    assert np.hypot(lab_out[..., 1], lab_out[..., 2]).mean() <= np.hypot(lab_in[..., 1], lab_in[..., 2]).mean() + 2
+
+
+def cv2_lab(x):
+    import cv2
+    lab = cv2.cvtColor(x, cv2.COLOR_RGB2LAB).astype(np.float32)
+    lab[..., 1:] -= 128
+    return lab
+
+
+def test_black_point_kept(img):
+    s = autotune.auto_settings(img)[0]
+    out = core.enhance(img, s)
+    p1 = lambda x: np.percentile(x.astype(float) @ [0.299, 0.587, 0.114], 1)
+    assert p1(out) > 0.4 * p1(img)
