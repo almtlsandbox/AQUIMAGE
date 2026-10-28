@@ -107,7 +107,7 @@ def video_settings(path: str, base: Optional[Settings] = None,
         raise IOError("aucune image lisible dans la vidéo")
     if auto:
         return autotune.auto_settings_multi(frames, base)
-    return (base or Settings()), {"type": "réglages fixes"}
+    return (base or Settings()), {"type": "réglages fixes", "kind": "fixed"}
 
 
 class Cancelled(Exception):
@@ -118,10 +118,15 @@ def process_video(src: str, dst: str, settings: Settings,
                   progress: Optional[Callable[[float], None]] = None,
                   cancel: Optional[threading.Event] = None,
                   crf: int = 21, preset: str = "veryfast",
-                  workers: int = 2) -> dict:
-    """Corrige *src* vers *dst* (mp4) avec *settings* (déjà estimés)."""
+                  workers: int = 2, rotate: int = 0) -> dict:
+    """Corrige *src* vers *dst* (mp4) avec *settings* (déjà estimés).
+
+    *rotate* : quarts de tour dans le sens horaire appliqués à chaque image.
+    """
     t0 = time.time()
-    frames = key_frames(src, 8, VIDEO_ANALYSIS_SIDE * 2)
+    rotate = int(rotate) % 4
+    frames = [core.rotate90(f, rotate)
+              for f in key_frames(src, 8, VIDEO_ANALYSIS_SIDE * 2)]
     plans = [core.build_plan(f, settings,
                              small=core.resize_max(f, VIDEO_ANALYSIS_SIDE))
              for f in frames]
@@ -137,6 +142,8 @@ def process_video(src: str, dst: str, settings: Settings,
         cap.release()
         raise IOError("aucune image lisible dans la vidéo")
     h, w = first.shape[:2]
+    if rotate % 2:
+        w, h = h, w
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     tmp_dst = os.path.join(os.path.dirname(os.path.abspath(dst)),
                            ".aqi_" + os.path.basename(dst))
@@ -180,7 +187,7 @@ def process_video(src: str, dst: str, settings: Settings,
             while frame is not None:
                 if cancel is not None and cancel.is_set():
                     raise Cancelled()
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                rgb = core.rotate90(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), rotate)
                 small = core.resize_max(rgb, VIDEO_ANALYSIS_SIDE)
                 prev = core.refresh_maps(gplan, rgb, small, prev,
                                          smooth=SMOOTH if prev is not None else 0.0)

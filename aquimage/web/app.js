@@ -4,7 +4,10 @@
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const fmtNum = (v, d = 2) => Number(v).toFixed(d).replace(".", ",").replace(/^-0,0+$/, "0");
+const fmtNum = (v, d = 2) => {
+  const t = Number(v).toFixed(d).replace(/^-0\.0+$/, "0");
+  return LANG === "en" ? t : t.replace(".", ",");
+};
 
 async function api(path, body) {
   const opt = body === undefined ? {} : {
@@ -15,7 +18,7 @@ async function api(path, body) {
   if (!r.ok) {
     let msg = r.statusText;
     if (ct.includes("json")) { try { msg = (await r.json()).error || msg; } catch (e) {} }
-    throw new Error(msg);
+    throw new Error(trMsg(msg));
   }
   return ct.includes("json") ? r.json() : r.blob();
 }
@@ -60,8 +63,8 @@ const Picker = {
         ul.appendChild(li);
       }
       $("#pk-count").textContent = d.path
-        ? countText(d.images, d.videos, "dans ce dossier")
-        : "Choisissez un lecteur ou un dossier récent.";
+        ? countText(d.images, d.videos, T("count.here"))
+        : T("pk.roots");
       $("#pk-ok").disabled = !d.path;
       $("#pk-new").disabled = !d.path;
     } catch (e) {
@@ -74,7 +77,7 @@ $("#pk-up").addEventListener("click", () => Picker.go($("#pk-up").dataset.to || 
 $("#pk-path").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); Picker.go(e.target.value); } });
 $("#pk-ok").addEventListener("click", () => Picker.done(Picker.cur));
 $("#pk-new").addEventListener("click", () => {
-  const name = prompt("Nom du nouveau dossier");
+  const name = prompt(T("pk.prompt"));
   if (name) Picker.done(joinPath(Picker.cur, name.trim()));
 });
 Picker.dlg.addEventListener("close", () => { if (Picker.resolve) { Picker.resolve(null); Picker.resolve = null; } });
@@ -86,50 +89,50 @@ $$("[data-pick]").forEach(b => b.addEventListener("click", async () => {
 }));
 
 function countText(img, vid, where = "") {
-  if (!img && !vid) return `Aucune photo ni vidéo ${where}`.trim() + ".";
+  if (!img && !vid) return `${T("count.none")} ${where}`.trim() + ".";
   const parts = [];
-  if (img) parts.push(`${img} photo${img > 1 ? "s" : ""}`);
-  if (vid) parts.push(`${vid} vidéo${vid > 1 ? "s" : ""}`);
-  return `${parts.join(" et ")} ${where}`.trim() + ".";
+  if (img) parts.push(TP("count.photo", img));
+  if (vid) parts.push(TP("count.video", vid));
+  return `${parts.join(` ${T("count.and")} `)} ${where}`.trim() + ".";
 }
 
 /* ---------------------------------------------------------------- réglages */
 const SLIDERS = [
-  { group: "Couleur", items: [
-    ["red_comp", "Compensation du rouge", 0, 2, 0.05],
-    ["color", "Correction de la dominante", 0, 1, 0.05],
-    ["water_keep", "Bleu gardé dans l'eau lointaine", 0, 1, 0.05],
-    ["temperature", "Température (froid à chaud)", -1, 1, 0.05],
-    ["tint", "Teinte (vert à magenta)", -1, 1, 0.05],
+  { group: "g.color", items: [
+    ["red_comp", "sl.red_comp", 0, 2, 0.05],
+    ["color", "sl.color", 0, 1, 0.05],
+    ["water_keep", "sl.water_keep", 0, 1, 0.05],
+    ["temperature", "sl.temperature", -1, 1, 0.05],
+    ["tint", "sl.tint", -1, 1, 0.05],
   ]},
-  { group: "Voile", items: [
-    ["strength", "Retrait du voile", 0, 1, 0.05],
-    ["t_min", "Protection contre le bruit au loin", 0.05, 0.6, 0.01],
+  { group: "g.haze", items: [
+    ["strength", "sl.strength", 0, 1, 0.05],
+    ["t_min", "sl.t_min", 0.05, 0.6, 0.01],
   ]},
-  { group: "Tonalité", items: [
-    ["exposure", "Luminosité", -2, 2, 0.05],
-    ["shadows", "Éclaircir les ombres", 0, 1, 0.05],
-    ["contrast", "Contraste local", 0, 1, 0.05],
-    ["vibrance", "Vibrance (couleurs ternes)", 0, 1, 0.05],
-    ["saturation", "Saturation", 0, 2, 0.05],
+  { group: "g.tone", items: [
+    ["exposure", "sl.exposure", -2, 2, 0.05],
+    ["shadows", "sl.shadows", 0, 1, 0.05],
+    ["contrast", "sl.contrast", 0, 1, 0.05],
+    ["vibrance", "sl.vibrance", 0, 1, 0.05],
+    ["saturation", "sl.saturation", 0, 2, 0.05],
   ]},
-  { group: "Réglages experts", advanced: true, items: [
-    ["max_gain", "Gain de couleur maximal", 1, 12, 0.1],
-    ["stretch", "Étirement maximal des niveaux", 1, 4, 0.1],
-    ["omega", "Part du voile estimée (ω)", 0.5, 0.98, 0.01],
-    ["black_clip", "Noirs écrêtés (%)", 0, 5, 0.1],
-    ["white_clip", "Blancs écrêtés (%)", 0, 5, 0.1],
+  { group: "g.expert", advanced: true, items: [
+    ["max_gain", "sl.max_gain", 1, 12, 0.1],
+    ["stretch", "sl.stretch", 1, 4, 0.1],
+    ["omega", "sl.omega", 0.5, 0.98, 0.01],
+    ["black_clip", "sl.black_clip", 0, 5, 0.1],
+    ["white_clip", "sl.white_clip", 0, 5, 0.1],
   ]},
 ];
 const ADJUST = [
-  ["temperature", "Température", -0.5, 0.5],
-  ["tint", "Teinte", -0.5, 0.5],
-  ["exposure", "Luminosité", -1, 1],
-  ["shadows", "Ombres", -0.3, 0.3],
-  ["saturation", "Saturation", -0.5, 0.5],
-  ["contrast", "Contraste local", -0.3, 0.3],
-  ["strength", "Retrait du voile", -0.4, 0.4],
-  ["water_keep", "Bleu gardé au loin", -0.4, 0.4],
+  ["temperature", "adj.temperature", -0.5, 0.5],
+  ["tint", "adj.tint", -0.5, 0.5],
+  ["exposure", "adj.exposure", -1, 1],
+  ["shadows", "adj.shadows", -0.3, 0.3],
+  ["saturation", "adj.saturation", -0.5, 0.5],
+  ["contrast", "adj.contrast", -0.3, 0.3],
+  ["strength", "adj.strength", -0.4, 0.4],
+  ["water_keep", "adj.water_keep", -0.4, 0.4],
 ];
 
 function sliderEl(key, label, min, max, step, value, onInput) {
@@ -137,7 +140,7 @@ function sliderEl(key, label, min, max, step, value, onInput) {
   wrap.className = "sl";
   wrap.dataset.key = key;
   const id = "s-" + key + "-" + Math.random().toString(36).slice(2, 7);
-  wrap.innerHTML = `<div class="row"><span><label for="${id}">${label}</label></span><output></output></div>
+  wrap.innerHTML = `<div class="row"><span><label for="${id}" data-i18n="${label}">${T(label)}</label></span><output></output></div>
     <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}">`;
   const input = $("input", wrap), out = $("output", wrap);
   const show = () => { out.textContent = fmtNum(input.value, step < 0.05 ? 2 : (step >= 1 ? 0 : 2)); };
@@ -170,16 +173,16 @@ const Lot = {
     $("#fixed-hint").hidden = !fixed;
     $("#adjust").hidden = fixed;
     $("#fixed-hint").textContent = Atelier.settings
-      ? `Réglages repris de « ${Atelier.sess ? Atelier.sess.name : "l'atelier"} ».`
-      : "Ouvrez d'abord une photo dans l'atelier et réglez-la.";
+      ? T("lot.fixed_from", { name: Atelier.sess ? Atelier.sess.name : T("lot.atelier") })
+      : T("lot.fixed_need");
   },
   async count() {
     const p = $("#src").value.trim();
     if (!p) { $("#src-count").textContent = ""; return; }
     try {
       const d = await api(`/api/browse?path=${encodeURIComponent(p)}`);
-      let txt = countText(d.images, d.videos, "dans ce dossier");
-      if (d.dirs.length) txt += ` Sous-dossiers : ${d.dirs.length}.`;
+      let txt = countText(d.images, d.videos, T("count.here"));
+      if (d.dirs.length) txt += " " + T("lot.subdirs", { n: d.dirs.length });
       $("#src-count").textContent = txt;
       if (!$("#dst").value) $("#dst").value = joinPath(p, "AquImage");
     } catch (e) { $("#src-count").textContent = e.message; }
@@ -188,7 +191,7 @@ const Lot = {
     $("#lot-error").textContent = "";
     const mode = $("input[name=mode]:checked").value;
     if (mode === "fixe" && !Atelier.settings) {
-      $("#lot-error").textContent = "Ouvrez une photo dans l'atelier pour définir les réglages communs.";
+      $("#lot-error").textContent = T("lot.err_fixed");
       return;
     }
     const adjust = {};
@@ -200,7 +203,7 @@ const Lot = {
       quality: Number($("#quality").value), mode, adjust,
       fixed: mode === "fixe" ? Atelier.settings : null,
     };
-    if (!body.src || !body.dst) { $("#lot-error").textContent = "Indiquez les deux dossiers."; return; }
+    if (!body.src || !body.dst) { $("#lot-error").textContent = T("lot.err_dirs"); return; }
     try {
       const s = await api("/api/batch/start", body);
       this.rows = [];
@@ -221,6 +224,7 @@ const Lot = {
   },
   render(s) {
     if (!s || s.state === "aucun") return;
+    this.last = s;
     $("#lot-empty").hidden = true;
     $("#lot-run").hidden = false;
     const running = s.state === "en cours";
@@ -228,16 +232,17 @@ const Lot = {
     $("#stop").hidden = !running;
     $("#run-bar").style.width = (100 * s.fraction).toFixed(1) + "%";
     let sum;
-    if (running) sum = `${s.done} sur ${s.total} fichiers traités`;
-    else if (s.state === "terminé") sum = `Terminé : ${s.ok} corrigé${s.ok > 1 ? "s" : ""}`
-      + (s.duplicates ? `, ${s.duplicates} doublon${s.duplicates > 1 ? "s" : ""} ignoré${s.duplicates > 1 ? "s" : ""}` : "")
-      + (s.skipped - (s.duplicates || 0) > 0 ? `, ${s.skipped - s.duplicates} autre${s.skipped - s.duplicates > 1 ? "s" : ""} ignoré${s.skipped - s.duplicates > 1 ? "s" : ""}` : "")
-      + (s.errors ? `, ${s.errors} en erreur` : "") + ".";
-    else if (s.state === "annulé") sum = `Arrêté après ${s.done} fichier${s.done > 1 ? "s" : ""}.`;
-    else sum = `Erreur : ${s.error}`;
+    const dups = s.duplicates || 0, others = s.skipped - dups;
+    if (running) sum = T("run.progress", { done: s.done, total: s.total });
+    else if (s.state === "terminé") sum = TP("run.done", s.ok)
+      + (dups ? TP("run.dups", dups) : "")
+      + (others > 0 ? TP("run.others", others) : "")
+      + (s.errors ? T("run.errors", { n: s.errors }) : "") + ".";
+    else if (s.state === "annulé") sum = TP("run.stopped", s.done);
+    else sum = T("run.error", { e: trMsg(s.error) });
     $("#run-summary").textContent = sum;
-    $("#run-eta").textContent = running && s.eta != null ? `encore ${dur(s.eta)} environ`
-      : (!running && s.elapsed ? `en ${dur(s.elapsed)}, rapport dans le dossier de sortie` : "");
+    $("#run-eta").textContent = running && s.eta != null ? T("run.eta", { d: dur(s.eta) })
+      : (!running && s.elapsed ? T("run.elapsed", { d: dur(s.elapsed) }) : "");
     const ul = $("#items");
     s.items.forEach((it, i) => {
       let li = this.rows[i];
@@ -245,7 +250,8 @@ const Lot = {
         li = document.createElement("li");
         li.className = "item";
         li.dataset.rel = it.rel;
-        li.title = "Ouvrir dans l'atelier";
+        li.dataset.i18nTitle = "item.open";
+        li.title = T("item.open");
         li.innerHTML = `<img class="th" alt="" loading="lazy"><img class="th none" alt="" loading="lazy">
           <div><div class="name"></div><div class="sub"></div><div class="mini" hidden><div></div></div></div><div class="st"></div>`;
         $(".th", li).src = thumbUrl(joinPath(s.src, it.rel), 192);
@@ -254,10 +260,11 @@ const Lot = {
         this.rows[i] = li;
       }
       const st = $(".st", li);
-      const LABEL = { ok: "Corrigé", "ignoré": "Ignoré", erreur: "Erreur", "annulé": "Arrêté", "en attente": "En attente" };
-      st.textContent = it.status === "en cours" ? `${Math.round(it.progress * 100)} %` : (LABEL[it.status] || it.status);
+      const LABEL = { ok: "st.ok", "ignoré": "st.skip", erreur: "st.error", "annulé": "st.cancel", "en attente": "st.wait" };
+      st.textContent = it.status === "en cours" ? `${Math.round(it.progress * 100)} %` : (LABEL[it.status] ? T(LABEL[it.status]) : it.status);
       st.className = "st " + ({ ok: "ok", erreur: "err", "en cours": "run", "ignoré": "skip" }[it.status] || "");
-      $(".sub", li).textContent = [it.kind === "video" ? "Vidéo" : "", it.type, it.message,
+      $(".sub", li).textContent = [it.kind === "video" ? T("video") : "",
+        it.type ? diagText({ ...(it.diag || {}), type: it.type }) : "", trMsg(it.message),
         it.status === "ok" && it.seconds ? dur(it.seconds) : ""].filter(Boolean).join(", ");
       const mini = $(".mini", li);
       mini.hidden = it.status !== "en cours";
@@ -322,6 +329,10 @@ const Viewer = {
       if (e.code === "Space" && !$("#view-atelier").hidden && !e.target.matches("input,select,textarea,button")) {
         e.preventDefault(); this.showBefore = true; this.apply();
       }
+      if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey
+          && !$("#view-atelier").hidden && !e.target.matches("input,select,textarea")) {
+        e.preventDefault(); Atelier.rotate(e.shiftKey ? -1 : 1);
+      }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (!$("#view-atelier").hidden && !e.target.matches("input,select,textarea")) Atelier.step(e.key === "ArrowRight" ? 1 : -1);
       }
@@ -355,8 +366,9 @@ const Viewer = {
     this.after.style.clipPath = this.showBefore ? "inset(0 0 0 100%)" : `inset(0 0 0 ${ix}px)`;
     $("#split").style.left = sx + "px";
     $("#split").hidden = this.showBefore;
-    const full = Atelier.sess && Atelier.sess.info.width ? Atelier.sess.info.width : this.w;
-    $("#zoom-v").textContent = this.fitted ? "Ajusté à la fenêtre" : `Zoom ${Math.round(this.s * this.w / full * 100)} %`;
+    const ss = Atelier.sess;
+    const full = ss && ss.info.width ? (ss.rot % 2 ? ss.info.height : ss.info.width) : this.w;
+    $("#zoom-v").textContent = this.fitted ? T("zoom.fit") : T("zoom", { n: Math.round(this.s * this.w / full * 100) });
   },
 };
 
@@ -372,16 +384,17 @@ const Atelier = {
       let host = sec;
       if (g.advanced) {
         const det = document.createElement("details");
-        det.innerHTML = `<summary>${g.group}</summary>`;
+        det.innerHTML = `<summary data-i18n="${g.group}">${T(g.group)}</summary>`;
         sec.appendChild(det); host = det;
       } else {
-        sec.innerHTML = `<h3>${g.group}</h3>`;
+        sec.innerHTML = `<h3 data-i18n="${g.group}">${T(g.group)}</h3>`;
       }
       for (const [k, label, min, max, step] of g.items) {
         const el = sliderEl(k, label, min, max, step, (INFO.defaults[k] ?? 0), (key, v) => this.change(key, v));
         $("input", el).disabled = true;
         el.addEventListener("dblclick", () => { if (this.auto) { this.change(k, this.auto[k]); el.set(this.auto[k]); } });
-        $(".row span", el).title = "Double-clic : revenir à la valeur automatique";
+        $(".row span", el).dataset.i18nTitle = "p.dblclick";
+        $(".row span", el).title = T("p.dblclick");
         this.els[k] = el;
         host.appendChild(el);
       }
@@ -396,6 +409,8 @@ const Atelier = {
       Lot.modeHint(); showView("lot");
     });
     $("#vpos").addEventListener("change", e => this.frame(Number(e.target.value)));
+    $("#rot-l").addEventListener("click", () => this.rotate(-1));
+    $("#rot-r").addEventListener("click", () => this.rotate(1));
     $("#thumbs").addEventListener("click", e => {
       const li = e.target.closest("li[data-path]");
       if (li) this.openFile(li.dataset.path);
@@ -409,13 +424,14 @@ const Atelier = {
     try {
       const d = await api(`/api/files?dir=${encodeURIComponent(dir)}`);
       this.dir = dir; this.files = d.files;
+      delete $("#strip-dir").dataset.i18n;
       $("#strip-dir").textContent = dir.split(/[\\/]/).filter(Boolean).pop() || dir; $("#strip-dir").title = dir;
       const ul = $("#thumbs"); ul.innerHTML = "";
-      if (!d.files.length) ul.innerHTML = `<li class="hint">Aucune photo ni vidéo ici.</li>`;
+      if (!d.files.length) ul.innerHTML = `<li class="hint" data-i18n="strip.empty">${T("strip.empty")}</li>`;
       for (const f of d.files) {
         const li = document.createElement("li");
         li.dataset.path = f.path; li.title = f.name;
-        li.innerHTML = `<img alt="${f.name.replace(/"/g, "")}" loading="lazy">` + (f.kind === "video" ? `<span class="vid">Vidéo</span>` : "");
+        li.innerHTML = `<img alt="${f.name.replace(/"/g, "")}" loading="lazy">` + (f.kind === "video" ? `<span class="vid" data-i18n="video">${T("video")}</span>` : "");
         $("img", li).src = thumbUrl(f.path, 240);
         ul.appendChild(li);
       }
@@ -428,8 +444,9 @@ const Atelier = {
     if (dir !== this.dir) await this.loadDir(dir);
     $$("#thumbs li").forEach(li => li.setAttribute("aria-current", String(li.dataset.path === path)));
     const cur = $(`#thumbs li[aria-current="true"]`); if (cur) cur.scrollIntoView({ block: "nearest" });
+    delete $("#p-name").dataset.i18n;
     $("#p-name").textContent = path.split(/[\\/]/).pop();
-    $("#p-diag").textContent = "Analyse de l'image…";
+    $("#p-diag").textContent = T("p.analysing");
     $("#busy").hidden = false;
     try {
       const d = await api("/api/open", { path });
@@ -449,18 +466,40 @@ const Atelier = {
     this.settings = { ...d.settings };
     this.auto = { ...d.settings };
     for (const [k, el] of Object.entries(this.els)) { el.set(this.settings[k]); $("input", el).disabled = false; el.classList.remove("changed"); }
-    const diag = d.diag || {};
-    const sz = d.kind === "video"
-      ? `Vidéo ${d.info.width}×${d.info.height}, ${dur(d.info.duration)}`
-      : `${d.info.width}×${d.info.height}${d.info.bits === 16 ? ", 16 bits" : ""}`;
-    $("#p-diag").textContent = `${sz}. Analyse : ${diag.type || "?"}.`;
+    this.showDiag();
     $("#btn-auto").disabled = false; $("#btn-save").disabled = false; $("#btn-tolot").disabled = false;
-    $("#btn-save").textContent = d.kind === "video" ? "Exporter la vidéo" : "Enregistrer";
+    $("#rot-l").disabled = false; $("#rot-r").disabled = false;
+    $("#btn-save").dataset.i18n = d.kind === "video" ? "a.save_video" : "a.save";
+    $("#btn-save").textContent = T($("#btn-save").dataset.i18n);
     $("#vpos-wrap").hidden = d.kind !== "video";
     $("#vpos").value = d.pos;
     $("#save-msg").textContent = "";
     this.loadBefore(fresh);
     this.render();
+  },
+  showDiag() {
+    const d = this.sess;
+    if (!d) return;
+    let w = d.info.width, h = d.info.height;
+    if (d.rot % 2) [w, h] = [h, w];
+    const sz = d.kind === "video"
+      ? T("p.video_size", { w, h, d: dur(d.info.duration) })
+      : `${w}×${h}${d.info.bits === 16 ? T("p.bits16") : ""}`;
+    let txt = T("p.diag", { sz, type: diagText(d.diag) });
+    if (d.rot) txt += " " + T("p.rotated", { deg: d.rot * 90 }) + ".";
+    $("#p-diag").textContent = txt;
+  },
+  async rotate(dir) {
+    if (!this.sess) return;
+    const rot = ((this.sess.rot || 0) + dir + 4) % 4;
+    $("#busy").hidden = false;
+    try {
+      const d = await api("/api/rotate", { id: this.sess.id, rot });
+      this.sess.rot = d.rot;
+      this.showDiag();
+      this.loadBefore(true);
+      this.render();
+    } catch (e) { $("#save-msg").textContent = e.message; $("#busy").hidden = true; }
   },
   loadBefore(fresh) {
     const im = Viewer.before;
@@ -493,7 +532,7 @@ const Atelier = {
   },
   async resetAuto() {
     if (!this.sess) return;
-    $("#p-diag").textContent = "Nouvelle analyse…";
+    $("#p-diag").textContent = T("p.reanalysing");
     const d = await api("/api/auto", { id: this.sess.id, settings: {} });
     this.setSession(d, false);
   },
@@ -507,7 +546,7 @@ const Atelier = {
   },
   async save() {
     const msg = $("#save-msg");
-    msg.textContent = this.sess.kind === "video" ? "Export de la vidéo…" : "Enregistrement en pleine résolution…";
+    msg.textContent = T(this.sess.kind === "video" ? "a.saving_video" : "a.saving");
     $("#btn-save").disabled = true;
     try {
       const r = await api("/api/save", { id: this.sess.id, settings: this.settings,
@@ -516,7 +555,7 @@ const Atelier = {
         $("#btn-save").disabled = false;
         await this.followTask(r.task, r.out);
       } else {
-        msg.textContent = `Enregistrée : ${r.out}`;
+        msg.textContent = T("a.saved", { out: r.out });
       }
     } catch (e) { msg.textContent = e.message; }
     $("#btn-save").disabled = false;
@@ -525,17 +564,41 @@ const Atelier = {
     const msg = $("#save-msg");
     for (;;) {
       const t = await api(`/api/task?id=${id}`);
-      if (t.state === "en cours") msg.textContent = `Export de la vidéo : ${Math.round(t.progress * 100)} %`;
-      else { msg.textContent = t.state === "terminé" ? `Vidéo exportée : ${out}` : `Export ${t.state}${t.message ? " : " + t.message : ""}`; return; }
+      if (t.state === "en cours") msg.textContent = T("a.video_progress", { p: Math.round(t.progress * 100) });
+      else {
+        msg.textContent = t.state === "terminé" ? T("a.video_done", { out })
+          : t.state === "annulé" ? T("a.video_cancel") : T("a.video_error", { m: trMsg(t.message) });
+        return;
+      }
       await new Promise(r => setTimeout(r, 1000));
     }
   },
 };
 
+/* ================================================================== langue */
+function setLang(code, save) {
+  LANG = STRINGS[code] ? code : "fr";
+  applyI18n();
+  if (!save) return;
+  try { localStorage.setItem("aquimage.lang", LANG); } catch (e) {}
+  api("/api/config", { lang: LANG }).catch(() => {});
+  // Textes calculés : on les refait dans la nouvelle langue
+  $$(".sl").forEach(el => el.set && el.set($("input", el).value));
+  if (Lot.last) Lot.render(Lot.last);
+  if ($("#src").value) Lot.count();
+  Lot.modeHint();
+  Atelier.showDiag();
+  Viewer.apply();
+}
+
 /* ================================================================ démarrage */
 (async function main() {
   INFO = await api("/api/info");
-  if (!INFO.ffmpeg) $("#top-note").textContent = "ffmpeg introuvable : les vidéos seront exportées sans le son.";
+  setLang(pickLang((INFO.config || {}).lang), false);
+  const sel = $("#lang");
+  for (const [code, name] of Object.entries(LANGS)) sel.add(new Option(name, code, false, code === LANG));
+  sel.addEventListener("change", () => setLang(sel.value, true));
+  if (!INFO.ffmpeg) { $("#top-note").dataset.i18n = "note.ffmpeg"; $("#top-note").textContent = T("note.ffmpeg"); }
   Lot.init();
   Viewer.init();
   Atelier.init();

@@ -179,6 +179,12 @@ def _odd(n: float, lo: int = 3) -> int:
     return n if n % 2 else n + 1
 
 
+def rotate90(img: np.ndarray, quarter: int) -> np.ndarray:
+    """Rotation de *quarter* quarts de tour dans le sens horaire (0 à 3)."""
+    q = int(quarter) % 4
+    return img if q == 0 else np.ascontiguousarray(np.rot90(img, -q))
+
+
 def resize_max(img: np.ndarray, max_side: int) -> np.ndarray:
     """Réduit l'image pour que son plus grand côté soit <= max_side."""
     h, w = img.shape[:2]

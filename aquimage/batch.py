@@ -67,7 +67,9 @@ class Item:
         return {"rel": self.rel, "kind": self.kind, "status": self.status,
                 "progress": round(self.progress, 3), "message": self.message,
                 "out": self.out, "seconds": round(self.seconds, 1),
-                "type": self.diag.get("type", "")}
+                "type": self.diag.get("type", ""),
+                "diag": {"kind": self.diag.get("kind", ""),
+                         "scene": self.diag.get("scene", [])}}
 
 
 def scan(src: str, recursive: bool = True, videos: bool = True) -> List[Item]:
@@ -157,7 +159,7 @@ def out_path(opts: BatchOptions, item: Item) -> str:
 def settings_for(opts: BatchOptions, img=None, video_path: str = "") -> tuple:
     """(réglages, diagnostic) d'un fichier selon le mode du lot."""
     if opts.mode == "fixe" and opts.fixed:
-        return Settings.from_dict(opts.fixed), {"type": "réglages fixes"}
+        return Settings.from_dict(opts.fixed), {"type": "réglages fixes", "kind": "fixed"}
     if video_path:
         s, diag = video.video_settings(video_path)
     else:

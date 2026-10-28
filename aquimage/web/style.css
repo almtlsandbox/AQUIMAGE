@@ -40,6 +40,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .tabs button[aria-selected="true"] { background: var(--raise); color: var(--text); }
 .top-note { margin-left: auto; color: var(--muted); font-size: 13px; }
+.top select.lang { width: auto; padding: 4px 8px; font-size: 13px; }
 
 .view { min-height: 0; }
 
@@ -141,6 +142,8 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .viewer-foot { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 12.5px; }
 .viewer-foot .sep { flex: 1; }
 .viewer-foot > * { white-space: nowrap; }
+.viewer-foot .rot { display: inline-flex; gap: 4px; }
+.btn.icon { min-width: 30px; padding: 2px 8px; font-size: 16px; line-height: 1.2; }
 .viewer-foot .keys { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .vpos { display: flex; align-items: center; gap: 8px; }
 .vpos input { width: 200px; }
@@ -182,3 +185,8 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
   .item .st { grid-column: 3; text-align: left; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Libellés longs (allemand, espagnol) : passer à la ligne plutôt que déborder */
+.panel .btn { white-space: normal; line-height: 1.25; }
+.export > *, .two > *, .panel-head > * { min-width: 0; }
+.viewer-foot .keys { flex: 0 1 auto; }

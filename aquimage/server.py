@@ -43,6 +43,7 @@ class Session:
         self.path = path
         self.kind = "video" if fileio.is_video(path) else "image"
         self.pos = 0.5
+        self.rot = 0                     # quarts de tour, sens horaire
         self.meta = None
         self.full: Optional[np.ndarray] = None
         if self.kind == "image":
@@ -59,9 +60,22 @@ class Session:
         self.lock = threading.Lock()
 
     def _set_frame(self, img: np.ndarray) -> None:
-        self.preview = core.resize_max(img, PREVIEW_SIDE)
-        self.small = core.resize_max(img, core.ANALYSIS_MAX_SIDE)
+        # Copies réduites non pivotées : la rotation se refait sans relire
+        self._preview0 = core.resize_max(img, PREVIEW_SIDE)
+        self._small0 = core.resize_max(img, core.ANALYSIS_MAX_SIDE)
+        self._apply_rot()
+
+    def _apply_rot(self) -> None:
+        self.preview = core.rotate90(self._preview0, self.rot)
+        self.small = core.rotate90(self._small0, self.rot)
         self.before_jpeg = fileio.jpeg_bytes(self.preview, 90)
+
+    def set_rot(self, rot: int) -> None:
+        self.rot = int(rot) % 4
+        self._apply_rot()
+
+    def full_rotated(self) -> np.ndarray:
+        return core.rotate90(self.full, self.rot)
 
     def set_pos(self, pos: float) -> None:
         self.pos = float(min(1.0, max(0.0, pos)))
@@ -76,7 +90,7 @@ class Session:
 
     def describe(self) -> dict:
         return {"id": self.id, "path": self.path, "name": os.path.basename(self.path),
-                "kind": self.kind, "info": self.info, "pos": self.pos,
+                "kind": self.kind, "info": self.info, "pos": self.pos, "rot": self.rot,
                 "settings": self.settings.to_dict(), "diag": self.diag}
 
 
@@ -229,8 +243,9 @@ def start_task(fn, *args) -> str:
     return tid
 
 
-def _export_video(task, sess: Session, settings: Settings, dst: str) -> str:
-    video.process_video(sess.path, dst, settings,
+def _export_video(task, sess: Session, settings: Settings, dst: str,
+                  rot: int) -> str:
+    video.process_video(sess.path, dst, settings, rotate=rot,
                         progress=lambda f: task.__setitem__("progress", f),
                         cancel=task["cancel"],
                         workers=max(2, min(4, (os.cpu_count() or 2) // 2)))
@@ -243,7 +258,7 @@ def save_output(sess: Session, settings: Settings, dest_dir: str, fmt: str,
     stem, ext = os.path.splitext(os.path.basename(sess.path))
     if sess.kind == "video":
         dst = os.path.join(dest_dir, stem + suffix + ".mp4")
-        tid = start_task(_export_video, sess, settings, dst)
+        tid = start_task(_export_video, sess, settings, dst, sess.rot)
         return {"task": tid, "out": dst}
     if fmt in ("jpg", "png", "tif"):
         ext = "." + fmt
@@ -251,8 +266,9 @@ def save_output(sess: Session, settings: Settings, dest_dir: str, fmt: str,
     if os.path.abspath(dst) == os.path.abspath(sess.path):
         raise ValueError("Le fichier de sortie remplacerait l'original : "
                          "choisissez un autre dossier ou un suffixe.")
-    plan = core.build_plan(sess.full, settings)
-    out = core.apply_plan(sess.full, plan)
+    img = sess.full_rotated()
+    plan = core.build_plan(img, settings)
+    out = core.apply_plan(img, plan)
     fileio.save_image(dst, out, sess.meta, quality)
     return {"out": dst}
 
@@ -358,6 +374,11 @@ class Handler(BaseHTTPRequestHandler):
                 with sess.lock:
                     data = sess.render(Settings.from_dict(b.get("settings")))
                 return self._send(200, data, "image/jpeg")
+            if u.path == "/api/rotate":
+                sess = APP.get(b["id"])
+                with sess.lock:
+                    sess.set_rot(int(b.get("rot", 0)))
+                return self._json(sess.describe())
             if u.path == "/api/frame":
                 sess = APP.get(b["id"])
                 with sess.lock:
@@ -381,6 +402,11 @@ class Handler(BaseHTTPRequestHandler):
                                   b.get("suffix", ""))
                 APP.save_config(atelier_dst=dest)
                 return self._json(res)
+            if u.path == "/api/config":
+                lang = b.get("lang")
+                if lang in ("fr", "en", "es", "de"):
+                    APP.save_config(lang=lang)
+                return self._json({"ok": True})
             if u.path == "/api/task/cancel":
                 t = APP.tasks.get(b["id"])
                 if t:

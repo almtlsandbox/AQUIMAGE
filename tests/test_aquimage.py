@@ -368,3 +368,85 @@ def test_black_point_kept(img):
     out = core.enhance(img, s)
     p1 = lambda x: np.percentile(x.astype(float) @ [0.299, 0.587, 0.114], 1)
     assert p1(out) > 0.4 * p1(img)
+
+
+# ---------------------------------------------------------------- v1.3 : rotation et langues
+def test_rotate90():
+    a = np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3)
+    r = core.rotate90(a, 1)                       # sens horaire
+    assert r.shape == (3, 2, 3) and r.flags.c_contiguous
+    assert (r[0, -1] == a[0, 0]).all()            # coin haut-gauche -> haut-droit
+    assert (core.rotate90(a, 4) == a).all() and (core.rotate90(core.rotate90(a, 1), -1) == a).all()
+
+
+def test_server_rotation_and_lang(tmp_path, img):
+    from http.server import ThreadingHTTPServer
+    from aquimage import server
+    server.CONFIG_PATH = str(tmp_path / "cfg.json")
+    server.APP.config = {}
+    Image.fromarray(img).save(tmp_path / "x.jpg")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    def post(path, body):
+        req = urllib.request.Request(base + path, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json"})
+        return urllib.request.urlopen(req, timeout=60)
+
+    try:
+        h, w = img.shape[:2]
+        d = json.loads(post("/api/open", {"path": str(tmp_path / "x.jpg")}).read())
+        assert d["rot"] == 0 and d["diag"]["kind"] in ("underwater", "light", "balanced", "red")
+        d = json.loads(post("/api/rotate", {"id": d["id"], "rot": 1}).read())
+        assert d["rot"] == 1
+        before = Image.open(urllib.request.urlopen(f"{base}/api/before?id={d['id']}"))
+        assert before.size[0] < before.size[1]            # portrait après rotation
+        r = Image.open(post("/api/render", {"id": d["id"], "settings": d["settings"]}))
+        assert r.size == before.size
+        out = json.loads(post("/api/save", {"id": d["id"], "settings": d["settings"],
+                                            "dest": str(tmp_path / "out")}).read())
+        with Image.open(out["out"]) as im:
+            assert im.size == (h, w)
+            assert im.getexif().get(0x0112, 1) == 1         # orientation EXIF neutre
+        post("/api/config", {"lang": "de"})
+        assert json.loads(urllib.request.urlopen(base + "/api/info").read())["config"]["lang"] == "de"
+    finally:
+        httpd.shutdown()
+
+
+@pytest.mark.skipif(not video.ffmpeg_exe(), reason="ffmpeg absent")
+def test_video_rotated(tmp_path):
+    ff = video.ffmpeg_exe()
+    src = str(tmp_path / "r.mp4")
+    subprocess.run([ff, "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x240:rate=10:duration=1", "-pix_fmt", "yuv420p", src], check=True)
+    dst = str(tmp_path / "o.mp4")
+    info = video.process_video(src, dst, Settings(), rotate=3)
+    assert (info["width"], info["height"]) == (240, 320)
+    meta = video.probe(dst)
+    assert (meta["width"], meta["height"]) == (240, 320)
+
+
+def test_i18n_keys_complete():
+    """Chaque clé utilisée par l'interface existe dans les quatre langues."""
+    import re
+    web = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "aquimage", "web")
+    src = open(os.path.join(web, "i18n.js"), encoding="utf-8").read()
+    langs = {}
+    for code in ("fr", "en", "es", "de"):
+        m = re.search(r"\n" + code + r": \{(.*?)\n\},", src, re.S)
+        assert m, code
+        langs[code] = set(re.findall(r'"([\w.]+)":', m.group(1)))
+    assert langs["fr"] == langs["en"] == langs["es"] == langs["de"]
+    html = open(os.path.join(web, "index.html"), encoding="utf-8").read()
+    js = open(os.path.join(web, "app.js"), encoding="utf-8").read()
+    used = set(re.findall(r'data-i18n(?:-\w+)?="([\w.]+)"', html))
+    used |= set(re.findall(r'\bTP?\("([\w.]+)"', js))
+    used |= {k + s for k in re.findall(r'\bTP\("([\w.]+)"', js) for s in ("_one", "_other")}
+    used -= set(re.findall(r'\bTP\("([\w.]+)"', js))
+    used |= set(re.findall(r'"((?:sl|adj|g|st|a)\.\w+)"', js))
+    used |= {"kind." + k for k in ("underwater", "light", "balanced", "red", "fixed")}
+    used |= {"scene." + k for k in ("backlit", "openwater", "antiviolet")}
+    missing = used - langs["fr"]
+    assert not missing, missing

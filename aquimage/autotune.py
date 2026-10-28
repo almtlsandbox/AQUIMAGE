@@ -26,6 +26,10 @@ def _clip(x, lo, hi):
     return float(min(hi, max(lo, x)))
 
 
+_SCENE_CODES = {"contre-jour": "backlit", "pleine eau": "openwater",
+                "anti-violet": "antiviolet"}
+
+
 def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
                   stats: Optional[dict] = None) -> Tuple[Settings, dict]:
     """Réglages adaptés à *img* (RGB encodé).  Retourne (réglages, diagnostic).
@@ -46,16 +50,16 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
     s = base.copy()
     # 1. Nature de la dominante
     if d >= 0.2:
-        kind = "sous-marine"
+        kind, code = "sous-marine", "underwater"
         s.red_comp, s.color = 1.0, 1.0
     elif d > 0.05:
-        kind = "dominante légère"
+        kind, code = "dominante légère", "light"
         s.red_comp, s.color = 0.5, 0.75
     elif d > -0.3:
-        kind = "déjà équilibrée (flash ou correction appareil)"
+        kind, code = "déjà équilibrée (flash ou correction appareil)", "balanced"
         s.red_comp, s.color = 0.0, 0.3
     else:
-        kind = "dominante rouge (filtre)"
+        kind, code = "dominante rouge (filtre)", "red"
         s.red_comp, s.color = 0.0, 0.7
 
     # 2. Bruit : plancher de transmission et dose de retrait du voile
@@ -111,6 +115,9 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
 
     diag = {
         "type": kind + (" ; " + ", ".join(scene) if scene else ""),
+        # Codes indépendants de la langue (traduits par l'interface)
+        "kind": code,
+        "scene": [_SCENE_CODES[x] for x in scene],
         "red_deficit": round(d, 3),
         "noise": round(noise, 4),
         "bright": round(bright, 3),

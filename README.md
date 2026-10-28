@@ -14,6 +14,8 @@ Double-cliquez sur **`AquImage.bat`**.
 
 Python 3.9 ou plus récent est nécessaire. Le lanceur trouve `C:\Python\Python39`, sinon `py` ou `python`.
 
+**Langue :** l'interface existe en français, anglais, espagnol et allemand. Choisissez-la en haut à droite ; le choix est mémorisé.
+
 Pour corriger un dossier sans ouvrir l'interface, glissez-le sur **`Corriger un dossier.bat`**. Les fichiers corrigés vont dans un sous-dossier `AquImage` de ce dossier.
 
 ## Lot : toute une plongée d'un coup
@@ -35,6 +37,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - La colonne de gauche montre les photos et vidéos du dossier. Les flèches du clavier passent à la suivante.
 - Faites glisser le séparateur orange pour comparer l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
 - La molette zoome et le glisser déplace l'image. Un double-clic ajuste l'image à la fenêtre.
+- **Rotation :** les boutons ↺ ↻ sous l'image, ou les touches **R** (sens horaire) et **Maj+R** (sens inverse), tournent la photo ou la vidéo par quarts de tour. La rotation est appliquée au fichier enregistré ou à la vidéo exportée. Elle repart de zéro à chaque nouvelle photo et ne s'applique pas au lot.
 - Les curseurs partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
 - **L'aperçu est fidèle à l'export :** les réglages ne dépendent pas de la résolution. L'écart mesuré entre l'aperçu et l'export pleine résolution est de 0,85 niveau sur 255.
 - **Enregistrer** produit le fichier en pleine résolution. Pour une vidéo, **Exporter la vidéo** traite le clip entier.
@@ -108,6 +111,14 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 **Limite connue :** en eau bleue profonde, sans sujet proche, l'eau peut garder une légère teinte lavande. Le curseur Teinte vers le vert, ou « Bleu gardé » plus haut, la corrige.
 
 ## Historique
+
+### 1.3.0
+
+- **Atelier :** rotation par pas de 90°, avec les boutons ↺ ↻ ou les touches R et Maj+R. Elle est appliquée à l'enregistrement en pleine résolution comme à l'export vidéo, avec une orientation EXIF neutre pour éviter une double rotation dans les visionneuses.
+- **Langues :** l'interface est disponible en français, anglais, espagnol et allemand.
+  - Le choix se fait en haut à droite. Il est mémorisé dans `~/.aquimage.json` ; par défaut, l'interface suit la langue du navigateur.
+  - Les diagnostics d'analyse (« sous-marine », « contre-jour »…) et les messages du lot sont traduits.
+  - Le rapport CSV et la ligne de commande restent en français.
 
 ### 1.2.0
 
