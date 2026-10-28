@@ -47,7 +47,10 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 | Température, Teinte | Réglages créatifs, du froid au chaud et du vert au magenta |
 | Retrait du voile | Enlève la brume de l'eau et rend du contraste aux sujets lointains |
 | Protection contre le bruit au loin | Limite l'amplification du bruit dans les zones très voilées |
-| Luminosité, Contraste local, Saturation | Réglages de tonalité |
+| Éclaircir les ombres | Débouche les sujets sombres (utile en contre-jour) |
+| Contraste local | Clarté des détails, appliquée aux tons moyens seulement |
+| Vibrance | Ravive les couleurs ternes sans pousser celles déjà vives |
+| Luminosité, Saturation | Réglages de tonalité |
 
 ## Vidéos
 
@@ -86,7 +89,7 @@ AquImage estime tout sur une copie réduite d'environ 0,3 Mpx. Il applique ensui
 2. **Balance des blancs.** Méthode « gray-world » en lumière linéaire, calculée surtout sur les sujets proches pour que l'eau, souvent majoritaire, n'impose pas sa couleur.
 3. **Retrait du voile.** Prior du canal sombre (He et al. 2011). La lumière de l'eau est cherchée par quadtree, dans une zone voilée et uniforme, pour ne pas confondre un objet clair avec l'eau. La transmission est affinée par filtre guidé. La soustraction est bornée pixel par pixel, ce qui évite les ombres violettes.
 4. **Correction graduée.** Elle est pleine sur les sujets proches et partielle sur l'eau très lointaine, qui reste bleue au lieu de virer au gris ou au magenta. La part gardée est choisie automatiquement en testant les pixels lointains.
-5. **Tonalité.** Niveaux, gamma automatique des tons moyens, hautes lumières écrêtées ramenées vers le blanc, saturation et clarté (contraste local guidé, sans halo).
+5. **Tonalité, sans rien couper.** Niveaux à étirement limité (×2,5 au plus), gamma modéré, éclaircissement des ombres, vibrance, clarté sur les tons moyens. Enfin, une épaule douce compresse les hautes lumières vers le blanc sans les écrêter et sans changer leur teinte.
 
 Ce que l'auto-réglage détecte, image par image :
 
@@ -96,10 +99,42 @@ Ce que l'auto-réglage détecte, image par image :
 | Dominante légère | Correction modérée |
 | Photo déjà équilibrée (flash, mode plongée de l'appareil) | Correction douce |
 | Filtre rouge | Correction sans compensation du rouge |
+| Contre-jour vers la surface | Voile moins retiré, ombres débouchées, ciel préservé |
+| Pleine eau sans sujet | Pas d'étirement (le bruit et le vignetage ne sont pas amplifiés) |
+| Ombres virant au violet | Balance des blancs réduite automatiquement |
 
-Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté. Ces règles ont été calibrées sur 35 photos réelles (SeaLife DC2000) et sur 24 scènes simulées dont on connaît la vraie couleur.
+Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté. Ces règles ont été calibrées sur 35 photos réelles, puis validées sur 40 photos d'un voyage en mer Rouge (SeaLife DC2000), et sur 24 scènes simulées dont on connaît la vraie couleur.
 
 **Limite connue :** en eau bleue profonde, sans sujet proche, l'eau peut garder une légère teinte lavande. Le curseur Teinte vers le vert, ou « Bleu gardé » plus haut, la corrige.
+
+## Historique
+
+### 1.1.0
+
+Corrige les rendus « durs » constatés sur une série de 1 576 photos de mer Rouge.
+
+![Original, AquImage 1.0 et 1.1 sur des photos de mer Rouge](docs/mer-rouge-v1.1.jpg)
+
+| Mesure (médiane, 40 photos de mer Rouge) | Original | 1.0 | 1.1 |
+| --- | --- | --- | --- |
+| Pixels écrêtés | 0,1 % | 5,7 % | 0,0 % |
+| Photos avec plus de 2 % d'écrêtage | 7 / 40 | 39 / 40 | 0 / 40 |
+| Zones claires devenues blanches | 0,7 % | 75 % | 0 % |
+| Contraste (écart-type de luminance) | 46 | 71 | 55 |
+| Contraste local | 7,4 | 13,2 | 9,8 |
+| Dominante de couleur restante | 18,5 | 5,5 | 5,3 |
+
+- **Hautes lumières :** épaule douce au lieu d'un écrêtage, et étirement des niveaux limité.
+- **Réglages par défaut adoucis :** retrait du voile 0,6, saturation 1,0, gain de couleur maximal ×4.
+- **Nouveaux réglages :** éclaircissement des ombres et vibrance.
+- **Auto-réglage :** détection du contre-jour et de la pleine eau, garde-fou contre les ombres violettes.
+- **JPEG :** enregistrement en 4:2:0 et qualité 92 par défaut. Sur une photo test de 7,6 Mo, la sortie passe de 25 Mo en 1.0 à 5,5 Mo.
+- **Correctif :** l'erreur « broken data stream » de Pillow est contournée (nouvel essai, puis enregistrement sans EXIF plutôt que perte de la photo).
+- **Vitesse :** les réductions entre canaux sont 2 à 3 fois plus rapides.
+
+### 1.0.0
+
+Première version : moteur de correction, lot, atelier, vidéos, interface locale.
 
 ## Développement
 

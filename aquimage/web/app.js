@@ -108,11 +108,14 @@ const SLIDERS = [
   ]},
   { group: "Tonalité", items: [
     ["exposure", "Luminosité", -2, 2, 0.05],
+    ["shadows", "Éclaircir les ombres", 0, 1, 0.05],
     ["contrast", "Contraste local", 0, 1, 0.05],
+    ["vibrance", "Vibrance (couleurs ternes)", 0, 1, 0.05],
     ["saturation", "Saturation", 0, 2, 0.05],
   ]},
   { group: "Réglages experts", advanced: true, items: [
     ["max_gain", "Gain de couleur maximal", 1, 12, 0.1],
+    ["stretch", "Étirement maximal des niveaux", 1, 4, 0.1],
     ["omega", "Part du voile estimée (ω)", 0.5, 0.98, 0.01],
     ["black_clip", "Noirs écrêtés (%)", 0, 5, 0.1],
     ["white_clip", "Blancs écrêtés (%)", 0, 5, 0.1],
@@ -122,6 +125,7 @@ const ADJUST = [
   ["temperature", "Température", -0.5, 0.5],
   ["tint", "Teinte", -0.5, 0.5],
   ["exposure", "Luminosité", -1, 1],
+  ["shadows", "Ombres", -0.3, 0.3],
   ["saturation", "Saturation", -0.5, 0.5],
   ["contrast", "Contraste local", -0.3, 0.3],
   ["strength", "Retrait du voile", -0.4, 0.4],

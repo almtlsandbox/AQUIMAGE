@@ -114,7 +114,7 @@ def _atomic_write(path: str, data: bytes) -> None:
 
 
 def encode_image(rgb: np.ndarray, ext: str, meta: Optional[ImageMeta] = None,
-                 quality: int = 95) -> bytes:
+                 quality: int = 92) -> bytes:
     """Encode *rgb* au format de l'extension *ext* (avec métadonnées)."""
     ext = ext.lower()
     meta = meta or ImageMeta()
@@ -133,8 +133,7 @@ def encode_image(rgb: np.ndarray, ext: str, meta: Optional[ImageMeta] = None,
     if ext in (".jpg", ".jpeg"):
         if meta.exif:
             kw["exif"] = meta.exif
-        im.save(bio, "JPEG", quality=int(quality), subsampling=0,
-                optimize=True, **kw)
+        return _save_jpeg(im, int(quality), kw)
     elif ext == ".png":
         if meta.exif:
             kw["exif"] = meta.exif
@@ -154,8 +153,29 @@ def encode_image(rgb: np.ndarray, ext: str, meta: Optional[ImageMeta] = None,
     return bio.getvalue()
 
 
+def _save_jpeg(im: Image.Image, quality: int, kw: dict) -> bytes:
+    """JPEG robuste.  4:2:0 (standard des appareils : fichiers de taille
+    comparable aux originaux, sans différence visible).  Certaines versions
+    de Pillow échouent (« broken data stream ») sur les très grosses images
+    avec un gros bloc EXIF : on réessaie avec un tampon plus grand, puis
+    sans EXIF plutôt que de perdre la photo."""
+    from PIL import ImageFile
+    attempts = [dict(kw), dict(kw), {k: v for k, v in kw.items() if k != "exif"}]
+    last = None
+    for i, extra in enumerate(attempts):
+        if i == 1:
+            ImageFile.MAXBLOCK = max(ImageFile.MAXBLOCK, im.width * im.height * 4)
+        bio = io.BytesIO()
+        try:
+            im.save(bio, "JPEG", quality=quality, subsampling=2, **extra)
+            return bio.getvalue()
+        except OSError as exc:
+            last = exc
+    raise last
+
+
 def save_image(path: str, rgb: np.ndarray, meta: Optional[ImageMeta] = None,
-               quality: int = 95) -> None:
+               quality: int = 92) -> None:
     ext = os.path.splitext(path)[1]
     _atomic_write(path, encode_image(rgb, ext, meta, quality))
 

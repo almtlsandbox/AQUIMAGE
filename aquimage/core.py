@@ -57,18 +57,21 @@ class Settings:
 
     red_comp: float = 1.0      # compensation du rouge / bleu (Ancuti), 0..2
     color: float = 1.0         # balance des blancs automatique, 0..1
-    max_gain: float = 8.0      # gain max par canal de la balance des blancs
+    max_gain: float = 4.0      # gain max par canal de la balance des blancs
     water_keep: float = 0.4    # part de la teinte de l'eau gardée au loin
-    strength: float = 0.8      # retrait du voile (0 = aucun, 1 = total)
+    strength: float = 0.6      # retrait du voile (0 = aucun, 1 = total)
     omega: float = 0.85        # part du voile prise en compte dans t
     t_min: float = 0.2         # transmission minimale (limite le bruit)
     temperature: float = 0.0   # -1 (froid) .. +1 (chaud)
     tint: float = 0.0          # -1 (vert) .. +1 (magenta)
     exposure: float = 0.0      # luminosité, en IL approximatifs
-    contrast: float = 0.3      # clarté / contraste local, 0..1
-    saturation: float = 1.1    # 0..2
-    black_clip: float = 0.3    # % de pixels écrêtés en noir
-    white_clip: float = 0.4    # % de pixels écrêtés en blanc
+    contrast: float = 0.25     # clarté / contraste local, 0..1
+    saturation: float = 1.0    # 0..2
+    vibrance: float = 0.3      # renforce surtout les couleurs ternes, 0..1
+    shadows: float = 0.15      # éclaircit les ombres, 0..1
+    black_clip: float = 0.05   # % de pixels au noir
+    white_clip: float = 0.2    # % de pixels au blanc (avant l'épaule)
+    stretch: float = 2.5       # étirement maximal des niveaux
 
     LIMITS = {
         "red_comp": (0.0, 2.0), "color": (0.0, 1.0), "max_gain": (1.0, 12.0),
@@ -77,7 +80,8 @@ class Settings:
         "temperature": (-1.0, 1.0), "tint": (-1.0, 1.0),
         "exposure": (-2.0, 2.0), "contrast": (0.0, 1.0),
         "saturation": (0.0, 2.0), "black_clip": (0.0, 5.0),
-        "white_clip": (0.0, 5.0),
+        "white_clip": (0.0, 5.0), "stretch": (1.0, 4.0),
+        "vibrance": (0.0, 1.0), "shadows": (0.0, 1.0),
     }
 
     def clamp(self) -> "Settings":
@@ -159,6 +163,15 @@ def quantize(enc: np.ndarray, dtype) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Outils
 # ---------------------------------------------------------------------------
+
+def _max3(x: np.ndarray) -> np.ndarray:
+    """Maximum des 3 canaux (bien plus rapide que x.max(axis=2))."""
+    return np.maximum(np.maximum(x[..., 0], x[..., 1]), x[..., 2])
+
+
+def _min3(x: np.ndarray) -> np.ndarray:
+    return np.minimum(np.minimum(x[..., 0], x[..., 1]), x[..., 2])
+
 
 def _odd(n: float, lo: int = 3) -> int:
     n = max(lo, int(round(n)))
@@ -332,7 +345,7 @@ def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
     # 90 % d'un canal, avec un facteur commun aux 3 canaux (sinon les ombres
     # perdent leur vert et virent au violet).
     veil = water * (1.0 - tt)
-    f = np.clip((0.9 * lin / np.maximum(veil, 1e-6)).min(axis=2, keepdims=True),
+    f = np.clip(_min3(0.9 * lin / np.maximum(veil, 1e-6))[..., None],
                 0.0, 1.0)
     te = 1.0 - f * (1.0 - tt)
     rec = lin + s.strength * ((lin - water * (1.0 - te)) / te - lin)
@@ -345,34 +358,65 @@ def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
 
 
 def _clip_weight(enc0: np.ndarray) -> np.ndarray:
-    """Poids 0..1 des pixels écrêtés dans l'original (un canal ≥ 0,93)."""
-    return np.clip((enc0.max(axis=2) - 0.93) / 0.06, 0.0, 1.0).astype(np.float32)
+    """Poids 0..0,6 des pixels réellement écrêtés dans l'original."""
+    return (0.6 * np.clip((_max3(enc0) - 0.97) / 0.025, 0.0, 1.0)).astype(np.float32)
 
 
 def _post(enc: np.ndarray, lo: float, slope: float, gamma: float,
           tgain: np.ndarray, sat: float,
-          clipw: Optional[np.ndarray] = None) -> np.ndarray:
-    x = np.clip((enc - lo) * slope, 0.0, 1.0)
+          clipw: Optional[np.ndarray] = None,
+          shadows: float = 0.0, vibrance: float = 0.0) -> np.ndarray:
+    x = np.maximum((enc - lo) * slope, 0.0)
     if abs(gamma - 1.0) > 1e-3:
         x = np.power(x, gamma)
+    if shadows > 1e-3:
+        # Éclaircit les ombres (maximum vers L = 1/3), sans toucher aux blancs
+        L = np.clip(x @ LUMA_E, 1e-4, 1.0)
+        L2 = L + 1.2 * shadows * L * (1.0 - L) ** 2
+        x = x * (L2 / L)[..., None]
     if clipw is not None and clipw.any():
-        # Hautes lumières écrêtées : leur couleur est perdue -> vers le blanc
-        m = x.max(axis=2, keepdims=True)
+        # Hautes lumières écrêtées dans l'original : couleur perdue -> blanc
+        m = _max3(x)[..., None]
         x = x + clipw[..., None] * (m - x)
     x = x * tgain
-    if abs(sat - 1.0) > 1e-3:
+    if abs(sat - 1.0) > 1e-3 or vibrance > 1e-3:
         y = (x @ LUMA_E)[..., None]
-        x = y + sat * (x - y)
-    return np.clip(x, 0.0, 1.0)
+        k = sat
+        if vibrance > 1e-3:
+            # Vibrance : gain fort sur les couleurs ternes, nul sur les vives
+            c = (_max3(x)[..., None] - _min3(x)[..., None]) \
+                / np.maximum(_max3(x)[..., None], 1e-3)
+            k = sat * (1.0 + vibrance * 0.6 * np.clip(1.0 - 2.0 * c, 0.0, 1.0))
+        x = np.maximum(y + k * (x - y), 0.0)
+    return x
+
+
+SHOULDER_KNEE = 0.80
+
+
+def shoulder(x: np.ndarray, knee: float = SHOULDER_KNEE) -> np.ndarray:
+    """Épaule des hautes lumières, sans changer la teinte.
+
+    Le canal le plus fort de chaque pixel est compressé au-dessus de *knee*
+    vers 1 (courbe exponentielle, jamais atteinte) ; les trois canaux sont
+    mis à l'échelle du même facteur.  Les blancs gardent leur modelé au lieu
+    d'être coupés net à 255.
+    """
+    m = _max3(x)[..., None]
+    r = 1.0 - knee
+    over = np.maximum(m - knee, 0.0)
+    m2 = np.where(m > knee, knee + r * (1.0 - np.exp(-over / r)), m)
+    return np.clip(x * (m2 / np.maximum(m, 1e-6)), 0.0, 1.0)
 
 
 def _clarity(enc: np.ndarray, a: np.ndarray, b: np.ndarray, amount: float
              ) -> np.ndarray:
-    L = guide_of(enc)
+    L = np.clip(guide_of(enc), 0.0, 1.0)
     base = a * L + b
-    L2 = L + amount * (L - base)
-    ratio = np.clip(L2 / np.maximum(L, 1e-3), 0.0, 3.0)
-    return np.clip(enc * ratio[..., None], 0.0, 1.0)
+    w = 4.0 * L * (1.0 - L)            # tons moyens seulement : ni blancs ni noirs
+    L2 = L + amount * w * (L - base)
+    ratio = np.clip(L2 / np.maximum(L, 1e-3), 0.5, 2.0)
+    return enc * ratio[..., None]
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +433,7 @@ class Plan:
     water: np.ndarray           # lumière de l'eau, espace linéaire compensé
     keep: float                 # part de teinte d'eau gardée au loin
     t_ab: Tuple[np.ndarray, np.ndarray]     # coefficients de la transmission
+    pre: float                  # mise à l'échelle linéaire avant encodage
     lo: float                   # niveau noir (encodé)
     slope: float                # pente des niveaux
     gamma: float                # gamma des tons moyens
@@ -470,10 +515,10 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     for _ in range(2):
         g = _wb_gains(lin, s, weight)
         wb = lin * g
-        dark = cv2.erode(wb.min(axis=2), kernel)
+        dark = cv2.erode(_min3(wb), kernel)
         A_wb, flat = water_quadtree(wb, dark, guide)
         A_wb = np.maximum(A_wb, 1e-3)
-        t_raw = 1.0 - s.omega * cv2.erode((wb / A_wb).min(axis=2), kernel)
+        t_raw = 1.0 - s.omega * cv2.erode(_min3(wb / A_wb), kernel)
         t_raw = np.clip(t_raw, 0.0, 1.0).astype(np.float32)
         t_ab = guided_coeffs(guide, t_raw, t_rad, 1e-3)
         t = np.clip(t_ab[0] * guide + t_ab[1], 0.0, 1.0)
@@ -486,19 +531,24 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     rec = _restore(lin, t, water, g, keep, s)
     t_far = float(np.percentile(t, 5))
 
-    # 5. Tonalité (niveaux de luminance, auto-gamma, etc.)
-    enc = encode_srgb(rec)
+    # 5. Tonalité : rien n'est coupé net.  Mise à l'échelle linéaire pour
+    # que les hautes lumières tiennent, niveaux bornés (étirement ≤ stretch),
+    # auto-gamma modéré, puis épaule douce des hautes lumières.
+    mx = _max3(rec)
+    pre = float(1.0 / max(1.0, float(np.percentile(mx, 99.8))))
+    enc = encode_srgb(rec * pre)
     Y = enc.reshape(-1, 3) @ LUMA_E
-    lo = float(np.percentile(Y, s.black_clip))
-    hi = float(np.percentile(Y, 100.0 - s.white_clip))
-    slope = float(min(1.0 / max(hi - lo, 1e-3), 6.0))
+    lo = float(np.percentile(Y, s.black_clip)) if s.black_clip > 0 else 0.0
+    hi = float(np.percentile(_max3(enc), 100.0 - s.white_clip))
+    slope = float(min(1.0 / max(hi - lo, 1e-3), s.stretch))
     med = float(np.median(np.clip((Y - lo) * slope, 0, 1)))
     g_auto = float(np.clip(np.log(MID_TARGET) / np.log(min(max(med, 0.02), 0.98)),
-                           0.6, 1.5))
+                           0.8, 1.25))
     gamma = g_auto * float(2.0 ** (-0.5 * s.exposure))
     tgain = (np.exp(np.array([0.10, 0.0, -0.10]) * s.temperature)
              * np.exp(np.array([0.05, -0.08, 0.05]) * s.tint)).astype(np.float32)
-    out = _post(enc, lo, slope, gamma, tgain, s.saturation, _clip_weight(enc0))
+    out = shoulder(_post(enc, lo, slope, gamma, tgain, s.saturation, _clip_weight(enc0),
+                s.shadows, s.vibrance))
     L = guide_of(out)
     clar_ab = guided_coeffs(L, L, max(4, int(round(0.08 * mm))), 0.02)
 
@@ -512,8 +562,8 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
         "auto_keep": round(choose_keep(enc0, t, comp, water, g, s), 3),
     }
     return Plan(settings=s, comp=comp, gains=g, water=water, keep=keep,
-                t_ab=t_ab, lo=lo, slope=slope, gamma=gamma, tgain=tgain,
-                clar_ab=clar_ab, clarity=1.6 * s.contrast, stats=stats)
+                t_ab=t_ab, pre=pre, lo=lo, slope=slope, gamma=gamma, tgain=tgain,
+                clar_ab=clar_ab, clarity=1.2 * s.contrast, stats=stats)
 
 
 # ---------------------------------------------------------------------------
@@ -529,13 +579,14 @@ def _apply_strip(part: np.ndarray, plan: Plan, full_hw: Tuple[int, int],
                 + upsample_rows(plan.t_ab[1], full_hw, y0, y1), 0.0, 1.0)
     lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(t, plan.keep)))
     rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s)
-    enc = _post(encode_srgb(rec), plan.lo, plan.slope, plan.gamma,
-                plan.tgain, s.saturation, _clip_weight(enc0))
+    enc = _post(encode_srgb(rec * plan.pre), plan.lo, plan.slope, plan.gamma,
+                plan.tgain, s.saturation, _clip_weight(enc0),
+                s.shadows, s.vibrance)
     if plan.clarity > 1e-3:
         a = upsample_rows(plan.clar_ab[0], full_hw, y0, y1)
         b = upsample_rows(plan.clar_ab[1], full_hw, y0, y1)
         enc = _clarity(enc, a, b, plan.clarity)
-    return enc
+    return shoulder(enc)
 
 
 def apply_plan(img: np.ndarray, plan: Plan, out_dtype=None,
@@ -593,7 +644,7 @@ def refresh_maps(plan: Plan, img: np.ndarray,
     lin = decode_linear(_compensate(enc0, plan.comp))
     wb = lin * plan.gains
     A_wb = np.maximum(plan.water * plan.gains, 1e-3)
-    t_raw = 1.0 - s.omega * cv2.erode((wb / A_wb).min(axis=2), kernel)
+    t_raw = 1.0 - s.omega * cv2.erode(_min3(wb / A_wb), kernel)
     t_ab = guided_coeffs(guide, np.clip(t_raw, 0, 1).astype(np.float32),
                          t_rad, 1e-3)
     if prev is not None and smooth > 0 and prev.t_ab[0].shape == t_ab[0].shape:
@@ -603,15 +654,16 @@ def refresh_maps(plan: Plan, img: np.ndarray,
 
     lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(t, plan.keep)))
     rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s)
-    out = _post(encode_srgb(rec), plan.lo, plan.slope, plan.gamma,
-                plan.tgain, s.saturation, _clip_weight(enc0))
+    out = shoulder(_post(encode_srgb(rec * plan.pre), plan.lo, plan.slope,
+                         plan.gamma, plan.tgain, s.saturation, _clip_weight(enc0),
+                s.shadows, s.vibrance))
     L = guide_of(out)
     clar_ab = guided_coeffs(L, L, max(4, int(round(0.08 * mm))), 0.02)
     if prev is not None and smooth > 0 and prev.clar_ab[0].shape == clar_ab[0].shape:
         clar_ab = (smooth * prev.clar_ab[0] + (1 - smooth) * clar_ab[0],
                    smooth * prev.clar_ab[1] + (1 - smooth) * clar_ab[1])
     return Plan(settings=s, comp=plan.comp, gains=plan.gains, water=plan.water,
-                keep=plan.keep, t_ab=t_ab, lo=plan.lo, slope=plan.slope,
+                keep=plan.keep, t_ab=t_ab, pre=plan.pre, lo=plan.lo, slope=plan.slope,
                 gamma=plan.gamma, tgain=plan.tgain, clar_ab=clar_ab,
                 clarity=plan.clarity, stats=plan.stats)
 
@@ -625,7 +677,8 @@ def merge_plans(plans) -> Plan:
                 gains=med("gains").astype(np.float32),
                 water=med("water").astype(np.float32),
                 keep=float(np.median([p.keep for p in plans])),
-                t_ab=p0.t_ab, lo=float(np.median([p.lo for p in plans])),
+                t_ab=p0.t_ab, pre=float(np.median([p.pre for p in plans])),
+                lo=float(np.median([p.lo for p in plans])),
                 slope=float(np.median([p.slope for p in plans])),
                 gamma=float(np.median([p.gamma for p in plans])),
                 tgain=p0.tgain, clar_ab=p0.clar_ab, clarity=p0.clarity,

@@ -85,7 +85,7 @@ def main(argv=None) -> int:
     lot.add_argument("--sans-sous-dossiers", action="store_true")
     lot.add_argument("--sans-videos", action="store_true")
     lot.add_argument("--format", choices=["same", "jpg", "png", "tif"], default="same")
-    lot.add_argument("--qualite", type=int, default=95)
+    lot.add_argument("--qualite", type=int, default=92)
     lot.add_argument("--remplacer", action="store_true", help="refaire les fichiers déjà présents")
     lot.add_argument("--suffixe", default="")
     lot.add_argument("--workers", type=int, default=0)
@@ -95,7 +95,7 @@ def main(argv=None) -> int:
     im = sub.add_parser("image", help="corriger une image")
     im.add_argument("entree")
     im.add_argument("sortie")
-    im.add_argument("--qualite", type=int, default=95)
+    im.add_argument("--qualite", type=int, default=92)
 
     a = p.parse_args(argv)
     if a.cmd == "lot":

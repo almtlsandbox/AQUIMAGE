@@ -235,3 +235,70 @@ def test_server_api(tmp_path, img):
             urllib.request.urlopen(req)
     finally:
         httpd.shutdown()
+
+
+# ---------------------------------------------------------------- v1.1 : retours Mer Rouge
+def _backlit(h=400, w=600, seed=0):
+    """Contre-jour : ciel clair dégradé en haut, récif sombre bleuté en bas."""
+    rng = np.random.default_rng(seed)
+    y = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+    sky = np.array([0.72, 0.96, 1.0], np.float32) * (1.0 - 0.25 * y) * np.ones((1, w, 1), np.float32)
+    reef = (0.05 + 0.15 * rng.random((h, w, 1), dtype=np.float32)) * np.array([0.4, 0.8, 1.0], np.float32)
+    m = (y > 0.45).astype(np.float32)
+    img = sky * (1 - m) + reef * m
+    return (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
+
+
+def test_backlit_highlights_not_blown():
+    img = _backlit()
+    s, diag = autotune.auto_settings(img)
+    assert "contre-jour" in diag["type"]
+    out = core.enhance(img, s)
+    sky_in = img[: img.shape[0] // 3]
+    sky_out = out[: img.shape[0] // 3]
+    # le ciel garde son modelé : presque aucun pixel à 255, dégradé conservé
+    assert (sky_out.max(axis=2) >= 254).mean() < 0.01
+    assert sky_out[..., 1].astype(float).std() > 0.5 * sky_in[..., 1].astype(float).std()
+
+
+def test_open_water_not_stretched():
+    rng = np.random.default_rng(0)
+    base = np.array([20, 40, 120], np.float32)
+    img = np.clip(base + rng.normal(0, 3, (300, 450, 3)), 0, 255).astype(np.uint8)
+    s, diag = autotune.auto_settings(img)
+    assert "pleine eau" in diag["type"]
+    out = core.enhance(img, s)
+    g_in = img.astype(float) @ [0.299, 0.587, 0.114]
+    g_out = out.astype(float) @ [0.299, 0.587, 0.114]
+    assert g_out.std() < 3.0 * g_in.std() + 2      # pas de bruit étiré x4
+
+
+def test_no_hard_clipping_on_typical_scene(img):
+    out = core.enhance(img, autotune.auto_settings(img)[0])
+    assert (out.max(axis=2) >= 254).mean() < 0.005
+
+
+def test_jpeg_save_falls_back(monkeypatch, tmp_path, img):
+    """Un échec « broken data stream » de Pillow ne doit pas perdre la photo."""
+    from PIL import Image as PILImage
+    real = PILImage.Image.save
+    calls = {"n": 0}
+
+    def flaky(self, fp, format=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("broken data stream when writing image file")
+        return real(self, fp, format, **kw)
+
+    monkeypatch.setattr(PILImage.Image, "save", flaky)
+    p = tmp_path / "x.jpg"
+    fileio.save_image(str(p), img)
+    assert p.exists() and calls["n"] >= 2
+
+
+def test_jpeg_size_reasonable(tmp_path, img):
+    p_in, p_out = tmp_path / "in.jpg", tmp_path / "out.jpg"
+    Image.fromarray(img).save(p_in, quality=92)
+    arr, meta = fileio.read_image(str(p_in))
+    fileio.save_image(str(p_out), core.enhance(arr), meta)
+    assert os.path.getsize(p_out) < 2.0 * os.path.getsize(p_in)

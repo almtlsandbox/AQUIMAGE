@@ -377,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
                 sess = APP.get(b["id"])
                 dest = b.get("dest") or os.path.join(os.path.dirname(sess.path), "AquImage")
                 res = save_output(sess, Settings.from_dict(b.get("settings")), dest,
-                                  b.get("fmt", "same"), int(b.get("quality", 95)),
+                                  b.get("fmt", "same"), int(b.get("quality", 92)),
                                   b.get("suffix", ""))
                 APP.save_config(atelier_dst=dest)
                 return self._json(res)
@@ -394,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
                     videos=bool(b.get("videos", True)), mode=b.get("mode", "auto"),
                     adjust={k: float(v) for k, v in (b.get("adjust") or {}).items()},
                     fixed=b.get("fixed"), fmt=b.get("fmt", "same"),
-                    quality=int(b.get("quality", 95)),
+                    quality=int(b.get("quality", 92)),
                     overwrite=bool(b.get("overwrite", False)),
                     suffix=b.get("suffix", ""), workers=int(b.get("workers", 0)))
                 job = BatchJob(opts)

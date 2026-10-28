@@ -24,7 +24,7 @@ from . import autotune, core, fileio, video
 from .core import Settings
 
 ADJUSTABLE = ("temperature", "tint", "exposure", "saturation", "contrast",
-              "strength", "water_keep", "color")
+              "strength", "water_keep", "color", "shadows", "vibrance")
 
 
 @dataclass
@@ -37,7 +37,7 @@ class BatchOptions:
     adjust: Dict[str, float] = field(default_factory=dict)   # deltas (auto)
     fixed: Optional[dict] = None       # réglages (mode fixe)
     fmt: str = "same"                  # same | jpg | png | tif
-    quality: int = 95
+    quality: int = 92
     overwrite: bool = False
     suffix: str = ""
     workers: int = 0                   # 0 = automatique
