@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AquImage</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='11' y='2' width='10' height='28' rx='5' fill='%23ff6a2b'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="buoy" aria-hidden="true"></span>AquImage</div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-lot" aria-selected="true" data-view="lot">Lot</button>
+    <button role="tab" id="tab-atelier" aria-selected="false" data-view="atelier">Atelier</button>
+  </nav>
+  <div class="top-note" id="top-note"></div>
+</header>
+
+<!-- ======================= LOT ======================= -->
+<main id="view-lot" class="view lot">
+  <form class="lot-form" id="lot-form" autocomplete="off">
+    <div class="field">
+      <label for="src">Dossier des originaux</label>
+      <div class="path-row">
+        <input id="src" type="text" placeholder="D:\Plongées\2026-10 Mer Rouge" spellcheck="false">
+        <button type="button" class="btn" data-pick="src">Parcourir</button>
+      </div>
+      <p class="hint" id="src-count"></p>
+    </div>
+    <div class="field">
+      <label for="dst">Dossier des fichiers corrigés</label>
+      <div class="path-row">
+        <input id="dst" type="text" placeholder="D:\Plongées\2026-10 Mer Rouge\corrigées" spellcheck="false">
+        <button type="button" class="btn" data-pick="dst">Parcourir</button>
+      </div>
+      <p class="hint">Les originaux ne sont jamais modifiés. Les sous-dossiers sont recréés à l'identique.</p>
+    </div>
+
+    <fieldset class="field checks">
+      <label><input type="checkbox" id="recursive" checked> Inclure les sous-dossiers</label>
+      <label><input type="checkbox" id="videos" checked> Corriger aussi les vidéos</label>
+      <label><input type="checkbox" id="overwrite"> Refaire les fichiers déjà corrigés</label>
+    </fieldset>
+
+    <div class="field two">
+      <div>
+        <label for="fmt">Format</label>
+        <select id="fmt">
+          <option value="same">Même format</option>
+          <option value="jpg">JPEG</option>
+          <option value="tif">TIFF</option>
+          <option value="png">PNG</option>
+        </select>
+      </div>
+      <div>
+        <label for="quality">Qualité JPEG <output id="quality-v">95</output></label>
+        <input id="quality" type="range" min="80" max="100" step="1" value="95">
+      </div>
+    </div>
+
+    <fieldset class="field mode">
+      <legend>Réglages</legend>
+      <label><input type="radio" name="mode" value="auto" checked> Estimés pour chaque fichier</label>
+      <label><input type="radio" name="mode" value="fixe"> Identiques pour tous, repris de l'atelier</label>
+      <p class="hint" id="fixed-hint" hidden></p>
+    </fieldset>
+
+    <details class="field adjust" id="adjust">
+      <summary>Ajustements communs à tout le lot</summary>
+      <p class="hint">Ajoutés aux réglages automatiques de chaque fichier. Par exemple, un peu plus chaud pour toute une plongée.</p>
+      <div id="adjust-sliders"></div>
+    </details>
+
+    <div class="actions">
+      <button type="submit" class="btn primary" id="run">Corriger le dossier</button>
+      <button type="button" class="btn" id="stop" hidden>Arrêter</button>
+    </div>
+    <p class="form-error" id="lot-error" role="alert"></p>
+  </form>
+
+  <section class="lot-results" aria-live="polite">
+    <div class="empty" id="lot-empty">
+      <h2>Une plongée entière en une fois</h2>
+      <p>Choisissez le dossier des originaux et celui des fichiers corrigés. Chaque photo et chaque vidéo reçoit ses propres réglages, estimés d'après sa couleur d'eau, son voile et son bruit.</p>
+      <p>Un rapport des réglages retenus est enregistré avec les fichiers corrigés.</p>
+    </div>
+    <div id="lot-run" hidden>
+      <div class="run-head">
+        <p id="run-summary"></p>
+        <p class="run-eta" id="run-eta"></p>
+      </div>
+      <div class="bar"><div id="run-bar"></div></div>
+      <ol class="items" id="items"></ol>
+    </div>
+  </section>
+</main>
+
+<!-- ======================= ATELIER ======================= -->
+<main id="view-atelier" class="view atelier" hidden>
+  <aside class="strip">
+    <div class="strip-head">
+      <p class="strip-dir" id="strip-dir">Aucun dossier</p>
+      <button type="button" class="btn small" id="strip-pick">Changer</button>
+    </div>
+    <ul class="thumbs" id="thumbs"></ul>
+  </aside>
+
+  <section class="viewer-col">
+    <div class="viewer" id="viewer" tabindex="0" aria-label="Comparaison avant et après">
+      <div class="stage" id="stage">
+        <img id="img-before" alt="Original" draggable="false">
+        <div class="after-clip" id="after-clip"><img id="img-after" alt="Corrigée" draggable="false"></div>
+      </div>
+      <div class="split" id="split"><span class="grip"></span></div>
+      <span class="tag tag-l">Original</span><span class="tag tag-r">Corrigée</span>
+      <div class="busy" id="busy" hidden>Calcul</div>
+      <div class="viewer-empty" id="viewer-empty">
+        <p>Choisissez une photo dans la colonne de gauche.</p>
+        <button type="button" class="btn" id="viewer-pick">Ouvrir un dossier</button>
+      </div>
+    </div>
+    <div class="viewer-foot">
+      <span id="zoom-v">Ajusté</span>
+      <span class="sep"></span>
+      <label class="vpos" id="vpos-wrap" hidden>Position
+        <input type="range" id="vpos" min="0" max="1" step="0.01" value="0.5">
+      </label>
+      <span class="keys">Molette : zoom. Double-clic : ajuster. Espace : original. Flèches : photo suivante.</span>
+    </div>
+  </section>
+
+  <aside class="panel" id="panel">
+    <div class="panel-head">
+      <h2 id="p-name">Aucune image</h2>
+      <p class="hint" id="p-diag"></p>
+      <button type="button" class="btn" id="btn-auto" disabled>Revenir aux réglages auto</button>
+    </div>
+    <div class="sliders" id="sliders"></div>
+    <div class="export">
+      <label for="a-dst">Enregistrer dans</label>
+      <div class="path-row">
+        <input id="a-dst" type="text" spellcheck="false">
+        <button type="button" class="btn" data-pick="a-dst">Parcourir</button>
+      </div>
+      <div class="two">
+        <select id="a-fmt" aria-label="Format">
+          <option value="same">Même format</option>
+          <option value="jpg">JPEG</option>
+          <option value="tif">TIFF</option>
+          <option value="png">PNG</option>
+        </select>
+        <button type="button" class="btn primary" id="btn-save" disabled>Enregistrer</button>
+      </div>
+      <button type="button" class="btn ghost" id="btn-tolot" disabled>Utiliser ces réglages pour un lot</button>
+      <p class="hint" id="save-msg" role="status"></p>
+    </div>
+  </aside>
+</main>
+
+<!-- ======================= Sélecteur de dossier ======================= -->
+<dialog id="picker" aria-labelledby="picker-title">
+  <form method="dialog" class="picker">
+    <h2 id="picker-title">Choisir un dossier</h2>
+    <div class="path-row">
+      <button type="button" class="btn" id="pk-up" aria-label="Dossier parent">Remonter</button>
+      <input id="pk-path" type="text" spellcheck="false">
+    </div>
+    <ul class="pk-list" id="pk-list"></ul>
+    <p class="hint" id="pk-count"></p>
+    <div class="actions">
+      <button type="button" class="btn" id="pk-new">Nouveau dossier ici</button>
+      <span class="grow"></span>
+      <button value="cancel" class="btn">Annuler</button>
+      <button type="button" class="btn primary" id="pk-ok">Choisir ce dossier</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=7
+scikit-image>=0.19        # banc d'essai (bench/) et un test
+scikit-learn>=1.0         # images de référence du banc

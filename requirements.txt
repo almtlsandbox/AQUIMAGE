@@ -1,0 +1,5 @@
+# AquImage — Python 3.9 ou plus récent
+numpy>=1.21
+opencv-python>=4.6
+Pillow>=9.1
+imageio-ffmpeg>=0.4.8     # fournit ffmpeg (vidéos avec le son)
