@@ -206,15 +206,28 @@ def browse(path: str) -> dict:
             "dirs": dirs, "images": n_img, "videos": n_vid}
 
 
-def list_media(path: str) -> list:
+def _output_stems(dst: str) -> set:
+    """Noms (sans extension, en minuscules) des fichiers déjà présents dans *dst*."""
+    try:
+        return {os.path.splitext(e.name)[0].lower() for e in os.scandir(dst)
+                if e.is_file() and not e.name.startswith(".")}
+    except OSError:
+        return set()
+
+
+def list_media(path: str, dst: str = "") -> list:
+    """Photos et vidéos de *path* ; « done » indique qu'une version corrigée
+    du même nom existe déjà dans *dst* (dossier de l'atelier)."""
     path = os.path.abspath(path)
+    done = _output_stems(dst) if dst and os.path.abspath(dst) != path else set()
     out = []
     for e in sorted(os.scandir(path), key=lambda e: e.name.lower()):
         if e.is_file() and not e.name.startswith("."):
-            if fileio.is_image(e.name):
-                out.append({"name": e.name, "path": e.path, "kind": "image"})
-            elif fileio.is_video(e.name):
-                out.append({"name": e.name, "path": e.path, "kind": "video"})
+            kind = ("image" if fileio.is_image(e.name)
+                    else "video" if fileio.is_video(e.name) else None)
+            if kind:
+                out.append({"name": e.name, "path": e.path, "kind": kind,
+                            "done": os.path.splitext(e.name)[0].lower() in done})
     return out
 
 
@@ -327,7 +340,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/browse":
                 return self._json(browse(q.get("path", "")))
             if u.path == "/api/files":
-                return self._json({"files": list_media(q["dir"])})
+                return self._json({"files": list_media(q["dir"], q.get("dst", ""))})
             if u.path == "/api/thumb":
                 return self._send(200, APP.thumb(q["path"], int(q.get("w", 240))),
                                   "image/jpeg", cache=True)

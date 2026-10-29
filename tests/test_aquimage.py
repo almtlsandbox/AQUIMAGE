@@ -450,3 +450,18 @@ def test_i18n_keys_complete():
     used |= {"scene." + k for k in ("backlit", "openwater", "antiviolet")}
     missing = used - langs["fr"]
     assert not missing, missing
+
+
+# ---------------------------------------------------------------- v1.4 : filtres
+def test_list_media_done_flag(tmp_path, img):
+    from aquimage import server
+    for n in ("a.jpg", "b.jpg"):
+        Image.fromarray(img).save(tmp_path / n)
+    (tmp_path / "c.mp4").write_bytes(b"")
+    out = tmp_path / "AquImage"
+    out.mkdir()
+    Image.fromarray(img).save(out / "a.tif")          # sortie dans un autre format
+    files = {f["name"]: f for f in server.list_media(str(tmp_path), str(out))}
+    assert files["a.jpg"]["done"] and not files["b.jpg"]["done"]
+    assert files["c.mp4"]["kind"] == "video" and not files["c.mp4"]["done"]
+    assert not any(f["done"] for f in server.list_media(str(tmp_path), ""))

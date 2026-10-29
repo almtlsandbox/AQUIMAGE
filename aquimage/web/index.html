@@ -93,6 +93,21 @@
         <p class="run-eta" id="run-eta"></p>
       </div>
       <div class="bar"><div id="run-bar"></div></div>
+      <div class="filters" id="lot-filters">
+        <div class="seg" role="group" data-group="status">
+          <button type="button" data-f="all" aria-pressed="true"></button>
+          <button type="button" data-f="todo" aria-pressed="false"></button>
+          <button type="button" data-f="ok" aria-pressed="false"></button>
+          <button type="button" data-f="skip" aria-pressed="false"></button>
+          <button type="button" data-f="err" aria-pressed="false"></button>
+        </div>
+        <div class="seg" role="group" data-group="kind">
+          <button type="button" data-f="all" aria-pressed="true"></button>
+          <button type="button" data-f="image" aria-pressed="false"></button>
+          <button type="button" data-f="video" aria-pressed="false"></button>
+        </div>
+      </div>
+      <p class="hint" id="lot-none" hidden data-i18n="f.none"></p>
       <ol class="items" id="items"></ol>
     </div>
   </section>
@@ -104,6 +119,17 @@
     <div class="strip-head">
       <p class="strip-dir" id="strip-dir" data-i18n="strip.none">Aucun dossier</p>
       <button type="button" class="btn small" id="strip-pick" data-i18n="strip.change">Changer</button>
+    </div>
+    <div class="filters strip-filters" id="strip-filters">
+      <div class="seg" role="group" data-group="done">
+        <button type="button" data-f="all" aria-pressed="true"></button>
+        <button type="button" data-f="todo" aria-pressed="false" data-i18n-title="f.strip_todo_title"></button>
+      </div>
+      <div class="seg" role="group" data-group="kind">
+        <button type="button" data-f="all" aria-pressed="true"></button>
+        <button type="button" data-f="image" aria-pressed="false"></button>
+        <button type="button" data-f="video" aria-pressed="false"></button>
+      </div>
     </div>
     <ul class="thumbs" id="thumbs"></ul>
   </aside>

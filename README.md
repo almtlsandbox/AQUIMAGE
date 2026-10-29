@@ -30,6 +30,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - **Ajustements communs :** ils s'ajoutent aux réglages automatiques de chaque fichier, par exemple un peu plus chaud pour toute une plongée.
 - **Réglages identiques pour tous :** cette option reprend les réglages faits dans l'atelier sur une photo.
 - **Rapport :** `aquimage_rapport.csv` est écrit dans la destination. Il contient, pour chaque fichier, le type d'image détecté, les réglages retenus, la durée et les erreurs éventuelles. Il s'ouvre dans Excel.
+- **Filtres :** pendant et après le lot, la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos). Chaque bouton indique son nombre de fichiers.
 - **Dossiers de sortie :** un dossier nommé `AquImage`, ou contenant un rapport, n'est jamais retraité.
 
 ## Atelier : une photo à la fois
@@ -37,6 +38,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - La colonne de gauche montre les photos et vidéos du dossier. Les flèches du clavier passent à la suivante.
 - Faites glisser le séparateur orange pour comparer l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
 - La molette zoome et le glisser déplace l'image. Un double-clic ajuste l'image à la fenêtre.
+- **Filtres de la colonne :** « À corriger » masque les fichiers qui ont déjà une version dans le dossier « Enregistrer dans » ; ceux-là portent une coche ✓. « Photos » et « Vidéos » filtrent par type. Les flèches du clavier ne parcourent que les fichiers affichés, et les filtres choisis sont mémorisés.
 - **Rotation :** les boutons ↺ ↻ sous l'image, ou les touches **R** (sens horaire) et **Maj+R** (sens inverse), tournent la photo ou la vidéo par quarts de tour. La rotation est appliquée au fichier enregistré ou à la vidéo exportée. Elle repart de zéro à chaque nouvelle photo et ne s'applique pas au lot.
 - Les curseurs partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
 - **L'aperçu est fidèle à l'export :** les réglages ne dépendent pas de la résolution. L'écart mesuré entre l'aperçu et l'export pleine résolution est de 0,85 niveau sur 255.
@@ -111,6 +113,11 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 **Limite connue :** en eau bleue profonde, sans sujet proche, l'eau peut garder une légère teinte lavande. Le curseur Teinte vers le vert, ou « Bleu gardé » plus haut, la corrige.
 
 ## Historique
+
+### 1.4.0
+
+- **Filtres dans le lot :** par état (tous, à traiter, corrigés, ignorés, erreurs) et par type (photos, vidéos), avec le nombre de fichiers sur chaque bouton.
+- **Filtres dans la colonne de l'atelier :** « À corriger » (pas encore enregistrés dans le dossier de destination, les autres portent une coche ✓), photos ou vidéos. Les flèches ne parcourent que les fichiers affichés.
 
 ### 1.3.0
 

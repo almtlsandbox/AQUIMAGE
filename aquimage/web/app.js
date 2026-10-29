@@ -96,6 +96,45 @@ function countText(img, vid, where = "") {
   return `${parts.join(` ${T("count.and")} `)} ${where}`.trim() + ".";
 }
 
+/* ----------------------------------------------------------------- filtres */
+/* Barres de filtres à boutons segmentés. state = {groupe: valeur}. */
+const FILTERS = (() => {
+  const def = { lot: { status: "all", kind: "all" }, strip: { done: "all", kind: "all" } };
+  try {
+    const v = JSON.parse(localStorage.getItem("aquimage.filters") || "null");
+    if (v && v.lot && v.strip) return { lot: { ...def.lot, ...v.lot }, strip: { ...def.strip, ...v.strip } };
+  } catch (e) {}
+  return def;
+})();
+function saveFilters() {
+  try { localStorage.setItem("aquimage.filters", JSON.stringify(FILTERS)); } catch (e) {}
+}
+function initSeg(root, state, onChange) {
+  $$(".seg", root).forEach(seg => seg.addEventListener("click", e => {
+    const b = e.target.closest("button[data-f]");
+    if (!b || b.disabled) return;
+    state[seg.dataset.group] = b.dataset.f;
+    saveFilters();
+    onChange();
+  }));
+}
+/* labels : {groupe: {valeur: clé i18n}} ; counts : {groupe: {valeur: n}} */
+function paintSeg(root, state, labels, counts) {
+  $$(".seg", root).forEach(seg => {
+    const g = seg.dataset.group;
+    $$("button", seg).forEach(b => {
+      const f = b.dataset.f, n = counts[g][f] || 0;
+      b.textContent = T(labels[g][f]);
+      const span = document.createElement("span");
+      span.className = "n"; span.textContent = n;
+      b.appendChild(span);
+      b.setAttribute("aria-pressed", String(state[g] === f));
+      b.disabled = f !== "all" && n === 0 && state[g] !== f;
+    });
+  });
+}
+const KIND_LABELS = { all: "f.allkinds", image: "f.photos", video: "f.videos" };
+
 /* ---------------------------------------------------------------- réglages */
 const SLIDERS = [
   { group: "g.color", items: [
@@ -163,6 +202,7 @@ const Lot = {
     $("#lot-form").addEventListener("submit", e => { e.preventDefault(); this.start(); });
     $("#stop").addEventListener("click", () => api("/api/batch/cancel", {}));
     $$("input[name=mode]").forEach(r => r.addEventListener("change", () => this.modeHint()));
+    initSeg($("#lot-filters"), FILTERS.lot, () => this.applyFilter());
     $("#items").addEventListener("click", e => {
       const li = e.target.closest("li[data-rel]");
       if (li && $("#src").value) Atelier.openFile(joinPath($("#src").value, li.dataset.rel), true);
@@ -275,6 +315,32 @@ const Lot = {
         after.classList.remove("none");
       }
     });
+    this.applyFilter();
+  },
+  /* Groupe d'état d'un fichier du lot, pour le filtre. */
+  group(st) {
+    return st === "ok" ? "ok" : st === "erreur" ? "err"
+      : (st === "ignoré" || st === "annulé") ? "skip" : "todo";
+  },
+  applyFilter() {
+    const s = this.last;
+    if (!s) return;
+    const F = FILTERS.lot;
+    const counts = { status: { all: 0, todo: 0, ok: 0, skip: 0, err: 0 }, kind: { all: 0, image: 0, video: 0 } };
+    let shown = 0;
+    s.items.forEach((it, i) => {
+      const g = this.group(it.status);
+      const okS = F.status === "all" || F.status === g;
+      const okK = F.kind === "all" || F.kind === it.kind;
+      if (okK) { counts.status.all++; counts.status[g]++; }
+      if (okS) { counts.kind.all++; counts.kind[it.kind]++; }
+      const li = this.rows[i];
+      if (li) { li.hidden = !(okS && okK); if (!li.hidden) shown++; }
+    });
+    paintSeg($("#lot-filters"), F, {
+      status: { all: "f.all", todo: "f.todo", ok: "f.ok", skip: "f.skip", err: "f.err" }, kind: KIND_LABELS,
+    }, counts);
+    $("#lot-none").hidden = shown > 0 || !s.items.length;
   },
 };
 function dur(sec) {
@@ -411,6 +477,8 @@ const Atelier = {
     $("#vpos").addEventListener("change", e => this.frame(Number(e.target.value)));
     $("#rot-l").addEventListener("click", () => this.rotate(-1));
     $("#rot-r").addEventListener("click", () => this.rotate(1));
+    initSeg($("#strip-filters"), FILTERS.strip, () => this.applyFilter());
+    $("#a-dst").addEventListener("change", () => { if (this.dir) this.loadDir(this.dir); });
     $("#thumbs").addEventListener("click", e => {
       const li = e.target.closest("li[data-path]");
       if (li) this.openFile(li.dataset.path);
@@ -422,7 +490,9 @@ const Atelier = {
   },
   async loadDir(dir) {
     try {
-      const d = await api(`/api/files?dir=${encodeURIComponent(dir)}`);
+      if (!$("#a-dst").value) $("#a-dst").value = joinPath(dir, "AquImage");
+      const dst = $("#a-dst").value.trim();
+      const d = await api(`/api/files?dir=${encodeURIComponent(dir)}&dst=${encodeURIComponent(dst)}`);
       this.dir = dir; this.files = d.files;
       delete $("#strip-dir").dataset.i18n;
       $("#strip-dir").textContent = dir.split(/[\\/]/).filter(Boolean).pop() || dir; $("#strip-dir").title = dir;
@@ -431,11 +501,13 @@ const Atelier = {
       for (const f of d.files) {
         const li = document.createElement("li");
         li.dataset.path = f.path; li.title = f.name;
+        if (this.sess && this.sess.path === f.path) li.setAttribute("aria-current", "true");
         li.innerHTML = `<img alt="${f.name.replace(/"/g, "")}" loading="lazy">` + (f.kind === "video" ? `<span class="vid" data-i18n="video">${T("video")}</span>` : "");
         $("img", li).src = thumbUrl(f.path, 240);
         ul.appendChild(li);
+        this.markDone(f, li);
       }
-      if (!$("#a-dst").value) $("#a-dst").value = joinPath(dir, "AquImage");
+      this.applyFilter();
     } catch (e) { $("#strip-dir").textContent = e.message; }
   },
   async openFile(path, switchView) {
@@ -451,15 +523,57 @@ const Atelier = {
     try {
       const d = await api("/api/open", { path });
       this.setSession(d, true);
+      this.applyFilter();
     } catch (e) {
       $("#p-diag").textContent = e.message; $("#busy").hidden = true;
     }
   },
   step(delta) {
     if (!this.sess || !this.files.length) return;
-    const i = this.files.findIndex(f => f.path === this.sess.path);
-    const n = this.files[i + delta];
+    // On ne parcourt que les fichiers visibles avec les filtres actuels
+    const vis = this.files.filter(f => this.visible(f) || f.path === this.sess.path);
+    const i = vis.findIndex(f => f.path === this.sess.path);
+    const n = vis[i + delta];
     if (n) this.openFile(n.path);
+  },
+  visible(f) {
+    const F = FILTERS.strip;
+    return (F.kind === "all" || F.kind === f.kind) && (F.done === "all" || !f.done);
+  },
+  markDone(f, li) {
+    li = li || $$("#thumbs li").find(x => x.dataset.path === f.path);
+    if (!li) return;
+    let b = $(".done", li);
+    if (f.done && !b) {
+      b = document.createElement("span");
+      b.className = "done"; b.textContent = "✓";
+      li.appendChild(b);
+    }
+    if (b) { b.hidden = !f.done; b.title = T("f.done_badge"); }
+  },
+  applyFilter() {
+    const F = FILTERS.strip;
+    const counts = { done: { all: 0, todo: 0 }, kind: { all: 0, image: 0, video: 0 } };
+    const lis = $$("#thumbs li[data-path]");
+    for (const f of this.files) {
+      const okK = F.kind === "all" || F.kind === f.kind;
+      const okD = F.done === "all" || !f.done;
+      if (okK) { counts.done.all++; if (!f.done) counts.done.todo++; }
+      if (okD) { counts.kind.all++; counts.kind[f.kind]++; }
+      const li = lis.find(x => x.dataset.path === f.path);
+      // Le fichier ouvert reste visible, même s'il vient d'être enregistré
+      if (li) li.hidden = !(okK && okD) && !(this.sess && this.sess.path === f.path);
+    }
+    paintSeg($("#strip-filters"), F, {
+      done: { all: "f.all", todo: "f.strip_todo" }, kind: KIND_LABELS,
+    }, counts);
+  },
+  setDone(path) {
+    const f = this.files.find(x => x.path === path);
+    if (!f) return;
+    f.done = true;
+    this.markDone(f);
+    this.applyFilter();
   },
   setSession(d, fresh) {
     this.sess = d;
@@ -553,19 +667,21 @@ const Atelier = {
         dest: $("#a-dst").value.trim(), fmt: $("#a-fmt").value });
       if (r.task) {
         $("#btn-save").disabled = false;
-        await this.followTask(r.task, r.out);
+        await this.followTask(r.task, r.out, this.sess.path);
       } else {
         msg.textContent = T("a.saved", { out: r.out });
+        this.setDone(this.sess.path);
       }
     } catch (e) { msg.textContent = e.message; }
     $("#btn-save").disabled = false;
   },
-  async followTask(id, out) {
+  async followTask(id, out, src) {
     const msg = $("#save-msg");
     for (;;) {
       const t = await api(`/api/task?id=${id}`);
       if (t.state === "en cours") msg.textContent = T("a.video_progress", { p: Math.round(t.progress * 100) });
       else {
+        if (t.state === "terminé") this.setDone(src);
         msg.textContent = t.state === "terminé" ? T("a.video_done", { out })
           : t.state === "annulé" ? T("a.video_cancel") : T("a.video_error", { m: trMsg(t.message) });
         return;
@@ -588,6 +704,8 @@ function setLang(code, save) {
   if ($("#src").value) Lot.count();
   Lot.modeHint();
   Atelier.showDiag();
+  Atelier.applyFilter();
+  Atelier.files.forEach(f => Atelier.markDone(f));
   Viewer.apply();
 }
 
@@ -602,6 +720,7 @@ function setLang(code, save) {
   Lot.init();
   Viewer.init();
   Atelier.init();
+  Atelier.applyFilter();
   const c = INFO.config || {};
   if (c.src) { $("#src").value = c.src; Lot.count(); }
   if (c.dst) $("#dst").value = c.dst;
