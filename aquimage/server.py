@@ -10,6 +10,8 @@ import mimetypes
 import os
 import socket
 import string
+import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -231,6 +233,30 @@ def list_media(path: str, dst: str = "") -> list:
     return out
 
 
+def _launch(cmd) -> None:
+    """Lance un programme sans attendre (remplacé dans les tests)."""
+    subprocess.Popen(cmd, shell=False)
+
+
+def reveal(path: str) -> str:
+    """Ouvre *path* dans l'explorateur de fichiers du système.
+
+    Un fichier est sélectionné dans son dossier ; un dossier est ouvert.
+    """
+    path = os.path.abspath(path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Dossier introuvable : {path}")
+    is_file = os.path.isfile(path)
+    if os.name == "nt":
+        # explorer veut « /select,"chemin" » d'un seul tenant
+        _launch(f'explorer /select,"{path}"' if is_file else f'explorer "{path}"')
+    elif sys.platform == "darwin":
+        _launch(["open", "-R", path] if is_file else ["open", path])
+    else:
+        _launch(["xdg-open", os.path.dirname(path) if is_file else path])
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Tâches (export vidéo depuis l'atelier)
 # ---------------------------------------------------------------------------
@@ -415,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                                   b.get("suffix", ""))
                 APP.save_config(atelier_dst=dest)
                 return self._json(res)
+            if u.path == "/api/reveal":
+                return self._json({"path": reveal(b["path"])})
             if u.path == "/api/config":
                 lang = b.get("lang")
                 if lang in ("fr", "en", "es", "de"):

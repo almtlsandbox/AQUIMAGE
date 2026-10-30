@@ -204,3 +204,6 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .strip-filters .seg button { padding: 3px 7px; font-size: 12px; }
 .thumbs li[hidden], .items li[hidden] { display: none; }
 .thumbs .done { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65); color: var(--ok); font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+.run-head #run-open { flex: none; margin-bottom: 10px; }
+.run-head .run-eta { margin-left: auto; }
+#btn-reveal { justify-self: start; }

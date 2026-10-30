@@ -465,3 +465,19 @@ def test_list_media_done_flag(tmp_path, img):
     assert files["a.jpg"]["done"] and not files["b.jpg"]["done"]
     assert files["c.mp4"]["kind"] == "video" and not files["c.mp4"]["done"]
     assert not any(f["done"] for f in server.list_media(str(tmp_path), ""))
+
+
+# ---------------------------------------------------------------- v1.5 : ouvrir le dossier
+def test_reveal(tmp_path, monkeypatch, img):
+    from aquimage import server
+    calls = []
+    monkeypatch.setattr(server, "_launch", calls.append)
+    f = tmp_path / "x.jpg"
+    Image.fromarray(img).save(f)
+    assert server.reveal(str(f)) == str(f)
+    assert server.reveal(str(tmp_path)) == str(tmp_path)
+    assert len(calls) == 2
+    if os.name != "nt":
+        assert str(tmp_path) in calls[0] and str(f) not in calls[0]   # fichier -> son dossier
+    with pytest.raises(FileNotFoundError):
+        server.reveal(str(tmp_path / "absent"))

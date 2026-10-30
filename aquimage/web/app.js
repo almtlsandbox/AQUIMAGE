@@ -201,6 +201,9 @@ const Lot = {
     $("#src").addEventListener("change", () => this.count());
     $("#lot-form").addEventListener("submit", e => { e.preventDefault(); this.start(); });
     $("#stop").addEventListener("click", () => api("/api/batch/cancel", {}));
+    $("#run-open").addEventListener("click", () => {
+      if (this.last && this.last.dst) reveal(this.last.dst, $("#run-eta"));
+    });
     $$("input[name=mode]").forEach(r => r.addEventListener("change", () => this.modeHint()));
     initSeg($("#lot-filters"), FILTERS.lot, () => this.applyFilter());
     $("#items").addEventListener("click", e => {
@@ -470,6 +473,7 @@ const Atelier = {
     $("#viewer-pick").addEventListener("click", () => this.pickDir());
     $("#btn-auto").addEventListener("click", () => this.resetAuto());
     $("#btn-save").addEventListener("click", () => this.save());
+    $("#btn-reveal").addEventListener("click", () => { if (this.lastOut) reveal(this.lastOut, $("#save-msg")); });
     $("#btn-tolot").addEventListener("click", () => {
       $("input[name=mode][value=fixe]").checked = true;
       Lot.modeHint(); showView("lot");
@@ -568,6 +572,10 @@ const Atelier = {
       done: { all: "f.all", todo: "f.strip_todo" }, kind: KIND_LABELS,
     }, counts);
   },
+  showReveal(out) {
+    this.lastOut = out;
+    $("#btn-reveal").hidden = !out;
+  },
   setDone(path) {
     const f = this.files.find(x => x.path === path);
     if (!f) return;
@@ -588,6 +596,7 @@ const Atelier = {
     $("#vpos-wrap").hidden = d.kind !== "video";
     $("#vpos").value = d.pos;
     $("#save-msg").textContent = "";
+    this.showReveal(null);
     this.loadBefore(fresh);
     this.render();
   },
@@ -670,6 +679,7 @@ const Atelier = {
         await this.followTask(r.task, r.out, this.sess.path);
       } else {
         msg.textContent = T("a.saved", { out: r.out });
+        this.showReveal(r.out);
         this.setDone(this.sess.path);
       }
     } catch (e) { msg.textContent = e.message; }
@@ -681,7 +691,7 @@ const Atelier = {
       const t = await api(`/api/task?id=${id}`);
       if (t.state === "en cours") msg.textContent = T("a.video_progress", { p: Math.round(t.progress * 100) });
       else {
-        if (t.state === "terminé") this.setDone(src);
+        if (t.state === "terminé") { this.setDone(src); this.showReveal(out); }
         msg.textContent = t.state === "terminé" ? T("a.video_done", { out })
           : t.state === "annulé" ? T("a.video_cancel") : T("a.video_error", { m: trMsg(t.message) });
         return;
@@ -690,6 +700,12 @@ const Atelier = {
     }
   },
 };
+
+/* Ouvre un dossier (ou sélectionne un fichier) dans l'explorateur. */
+async function reveal(path, msgEl) {
+  try { await api("/api/reveal", { path }); }
+  catch (e) { if (msgEl) msgEl.textContent = e.message; }
+}
 
 /* ================================================================== langue */
 function setLang(code, save) {

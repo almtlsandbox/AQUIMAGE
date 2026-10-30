@@ -30,6 +30,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - **Ajustements communs :** ils s'ajoutent aux réglages automatiques de chaque fichier, par exemple un peu plus chaud pour toute une plongée.
 - **Réglages identiques pour tous :** cette option reprend les réglages faits dans l'atelier sur une photo.
 - **Rapport :** `aquimage_rapport.csv` est écrit dans la destination. Il contient, pour chaque fichier, le type d'image détecté, les réglages retenus, la durée et les erreurs éventuelles. Il s'ouvre dans Excel.
+- **Ouvrir le dossier de sortie :** ce bouton, à droite de la barre de progression, ouvre la destination dans l'Explorateur Windows.
 - **Filtres :** pendant et après le lot, la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos). Chaque bouton indique son nombre de fichiers.
 - **Dossiers de sortie :** un dossier nommé `AquImage`, ou contenant un rapport, n'est jamais retraité.
 
@@ -43,6 +44,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - Les curseurs partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
 - **L'aperçu est fidèle à l'export :** les réglages ne dépendent pas de la résolution. L'écart mesuré entre l'aperçu et l'export pleine résolution est de 0,85 niveau sur 255.
 - **Enregistrer** produit le fichier en pleine résolution. Pour une vidéo, **Exporter la vidéo** traite le clip entier.
+- **Ouvrir le dossier**, sous le message d'enregistrement, ouvre l'Explorateur avec le fichier corrigé sélectionné.
 
 | Curseur | Effet |
 | --- | --- |
@@ -113,6 +115,10 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 **Limite connue :** en eau bleue profonde, sans sujet proche, l'eau peut garder une légère teinte lavande. Le curseur Teinte vers le vert, ou « Bleu gardé » plus haut, la corrige.
 
 ## Historique
+
+### 1.5.0
+
+- **Ouvrir le dossier :** un bouton ouvre la destination du lot dans l'Explorateur Windows. Dans l'atelier, il sélectionne directement le fichier que vous venez d'enregistrer ou d'exporter.
 
 ### 1.4.0
 
