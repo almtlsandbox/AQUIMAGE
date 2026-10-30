@@ -107,14 +107,44 @@ Ce que l'auto-réglage détecte, image par image :
 | Photo déjà équilibrée (flash, mode plongée de l'appareil) | Correction douce |
 | Filtre rouge | Correction sans compensation du rouge |
 | Contre-jour vers la surface | Voile moins retiré, ombres débouchées, ciel préservé |
-| Pleine eau sans sujet | Pas d'étirement (le bruit et le vignetage ne sont pas amplifiés) |
+| Pleine eau sans sujet, même en dégradé de lumière | Pas d'étirement (le bruit et le vignetage ne sont pas amplifiés), l'eau reste azur |
 | Ombres virant au violet | Balance des blancs réduite automatiquement |
+
+Quelle que soit la photo, quatre garde-fous s'appliquent aussi :
+- **Eau lointaine :** elle garde sa teinte bleue. Seuls les sujets proches sont corrigés en entier, avec une transition douce entre les deux.
+- **Couleur au loin :** elle suit une carte de distance lissée. Au loin, seule la luminance est restaurée : le plancton, les bulles et le bruit ne deviennent pas des taches roses ou vertes.
+- **Ombres et quasi-noirs :** le magenta est retiré des ombres, et les quasi-noirs perdent leur teinte (plus de noirs bordeaux dans les épaves).
+- **Luminosité :** une photo claire à l'origine n'est pas assombrie, et les reflets écrêtés (soleil) ne dictent plus l'exposition.
 
 Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté. Ces règles ont été calibrées sur 35 photos réelles, puis validées sur 40 photos d'un voyage en mer Rouge (SeaLife DC2000), et sur 24 scènes simulées dont on connaît la vraie couleur.
 
-**Limite connue :** en eau bleue profonde, sans sujet proche, l'eau peut garder une légère teinte lavande. Le curseur Teinte vers le vert, ou « Bleu gardé » plus haut, la corrige.
+**Limite connue :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
 
 ## Historique
+
+### 1.6.0
+
+Suite de l'analyse des 1 045 photos du voyage Mer Rouge 2026 corrigées en 1.4. Mêmes photos, mêmes mesures, avant et après :
+
+| Défaut (nombre de photos sur 1 045) | 1.4 | 1.6 | Original |
+| --- | --- | --- | --- |
+| Ombres pourpres ou magenta | 73 | 12 | 9 |
+| Assombries de plus de 10 points | 43 | 3 | — |
+| Assombries de plus de 5 points | 150 | 48 | — |
+| Bruit doublé ou plus | 151 | 120 | — |
+| Blancs écrêtés (plus de 1 %) | 0 | 0 | — |
+
+Sur un échantillon de 40 photos, la part de pixels pourpres passe de 1,9 % à 0,2 % (0,06 % dans les originaux), et les taches de couleur dans l'eau lisse reculent d'environ 20 %.
+
+- **Ombres pourpres :** le magenta est retiré des tons sombres, et les quasi-noirs perdent leur teinte bordeaux.
+- **Eau bleue :** l'eau lointaine garde sa couleur. Les gains et la compensation suivent une carte de distance lissée, au lieu des marbrures de la carte fine.
+- **Taches dans l'eau :** au loin, seule la luminance est restaurée, pour ne pas amplifier le plancton, les bulles et le bruit.
+- **Assombrissement :**
+  - l'exposition se règle sur les hautes lumières non écrêtées ;
+  - l'auto-gamma n'assombrit plus nettement une photo claire.
+- **Pleine eau :** elle est aussi détectée quand l'eau est en dégradé. Elle ne vire plus à l'indigo.
+
+![Original, 1.4 et 1.6](docs/mer-rouge-v1.6.jpg)
 
 ### 1.5.0
 

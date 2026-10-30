@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+import cv2
 import numpy as np
 
 from . import core
@@ -25,6 +26,8 @@ from .core import Settings
 def _clip(x, lo, hi):
     return float(min(hi, max(lo, x)))
 
+
+OPEN_WATER_FINE = 0.006      # texture fine en dessous de laquelle c'est de la pleine eau
 
 _SCENE_CODES = {"contre-jour": "backlit", "pleine eau": "openwater",
                 "anti-violet": "antiviolet"}
@@ -46,6 +49,9 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
     luma = core.guide_of(enc0)
     bright = float((luma > 0.78).mean())          # part de ciel / surface claire
     texture = float(luma.std())                   # pleine eau : image très plate
+    # Texture fine (sans le dégradé de lumière de la surface vers le fond) :
+    # une pleine eau en dégradé a un écart-type élevé mais aucun détail.
+    fine = float((luma - cv2.GaussianBlur(luma, (0, 0), 0.05 * min(luma.shape))).std())
 
     s = base.copy()
     # 1. Nature de la dominante
@@ -76,7 +82,7 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
         scene.append("contre-jour")
         s.strength = min(s.strength, 0.45)
         s.shadows = _clip(0.25 + 1.5 * bright, 0.3, 0.6)
-    if texture < 0.07:
+    if texture < 0.07 or fine < OPEN_WATER_FINE:
         # Pleine eau sans sujet : ne pas étirer le bruit ni le vignetage
         scene.append("pleine eau")
         # Ni étirement, ni vibrance : sinon bleu électrique et bruit doublé

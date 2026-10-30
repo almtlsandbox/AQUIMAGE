@@ -42,6 +42,8 @@ ANALYSIS_MAX_SIDE = 640          # côté max de la copie d'analyse
 STRIP_ROWS = 256                 # hauteur des bandes pour apply_plan
 LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)    # linéaire Rec.709
 LUMA_E = np.array([0.299, 0.587, 0.114], np.float32)     # encodé (Rec.601)
+PRE_PCT = 99.5                   # centile des hautes lumières tenu sous l'épaule
+MID_DROP = 0.04                  # assombrissement toléré des tons moyens
 MID_TARGET = 0.42                # luminance médiane visée par l'auto-gamma
 
 
@@ -300,9 +302,30 @@ def _compensate(enc: np.ndarray, comp: np.ndarray,
     return np.clip(out, 0.0, 1.0)
 
 
+CHROMA_T0, CHROMA_T1 = 0.25, 0.60   # couleur restaurée : nulle au loin, pleine de près
+TCOL_SIGMA = 0.10        # lissage de la transmission « couleur » (part du petit côté)
+
+
+def smooth_t(t: np.ndarray) -> np.ndarray:
+    """Transmission lissée à grande échelle, pour moduler la couleur."""
+    sig = max(2.0, TCOL_SIGMA * min(t.shape[:2]))
+    return np.clip(cv2.GaussianBlur(t.astype(np.float32), (0, 0), sig,
+                                    borderType=cv2.BORDER_REFLECT), 0.0, 1.0)
+
+
+WATER_RG = 0.87          # eau lointaine : rouge ≤ 0,87 × vert (sinon indigo)
+FAR_T0, FAR_T1 = 0.35, 0.80   # eau lointaine (t ≤ T0) … sujets proches (t ≥ T1)
+
+
+def far_weight(t: np.ndarray) -> np.ndarray:
+    """0 sur les sujets proches, 1 dans l'eau lointaine (transition douce)."""
+    x = np.clip((FAR_T1 - t) / (FAR_T1 - FAR_T0), 0.0, 1.0)
+    return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
+
+
 def _near_weight(t: np.ndarray, keep: float) -> np.ndarray:
-    """1 sur les sujets proches (t≈1), → 1 − keep dans l'eau très lointaine."""
-    return (1.0 - keep * (1.0 - t) ** 2).astype(np.float32)
+    """1 sur les sujets proches, → 1 − keep dans l'eau lointaine."""
+    return (1.0 - keep * far_weight(t)).astype(np.float32)
 
 
 def choose_keep(enc0: np.ndarray, t: np.ndarray, comp: np.ndarray,
@@ -331,8 +354,10 @@ def choose_keep(enc0: np.ndarray, t: np.ndarray, comp: np.ndarray,
     e, tf = e[None], tf[None]
     for keep in np.linspace(lo, hi, 11):
         lin = decode_linear(_compensate(e, comp, _near_weight(tf, keep)))
-        c = _restore(lin, tf, water, gains, float(keep), s)[0]
-        bad = (c[:, 0] > c[:, 1] * 1.02) | (c[:, 0] > c[:, 2] * 1.02)
+        c = _restore(lin, tf, water, gains, float(keep), s, tf)[0]
+        # Rose, violet ou indigo : le rouge rattrape le vert (l'eau azur
+        # garde nettement plus de vert que de rouge) ou dépasse le bleu.
+        bad = (c[:, 0] > c[:, 1] * WATER_RG) | (c[:, 0] > c[:, 2] * 1.02)
         if bad.mean() < max_bad:
             return float(keep)
     # Aucune valeur ne garde ces zones bleues : ce sont surtout des sujets
@@ -341,7 +366,8 @@ def choose_keep(enc0: np.ndarray, t: np.ndarray, comp: np.ndarray,
 
 
 def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
-             gains: np.ndarray, keep: float, s: Settings) -> np.ndarray:
+             gains: np.ndarray, keep: float, s: Settings,
+             tc: Optional[np.ndarray] = None) -> np.ndarray:
     """Retrait du voile + gains spatialement variables.
 
     W(x) = G(x) · [lin + s·((lin − A)/max(t, t_min) + A − lin)]
@@ -356,8 +382,19 @@ def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
                 0.0, 1.0)
     te = 1.0 - f * (1.0 - tt)
     rec = lin + s.strength * ((lin - water * (1.0 - te)) / te - lin)
+    # Au loin (t faible), le retrait du voile divise les écarts de teinte par
+    # t : plancton, bulles et bruit deviennent des taches roses ou vertes.
+    # On n'y restaure que la luminance ; la couleur complète ne revient que
+    # sur les sujets proches.
+    tg = t if tc is None else tc
+    wcol = np.clip((tg - CHROMA_T0) / (CHROMA_T1 - CHROMA_T0), 0.0, 1.0)[..., None]
+    if (wcol < 1.0).any():
+        y_rec = np.maximum(rec, 0.0) @ LUMA
+        y_lin = np.maximum(lin @ LUMA, 1e-6)
+        rec_lum = lin * (y_rec / y_lin)[..., None]
+        rec = rec_lum + wcol * (rec - rec_lum)
     if keep > 0:
-        expo = (1.0 - keep * (1.0 - t) ** 2)[..., None]
+        expo = (1.0 - keep * far_weight(tg))[..., None]
         G = np.exp(np.log(gains)[None, None, :] * expo)
     else:
         G = gains[None, None, :]
@@ -395,7 +432,32 @@ def _post(enc: np.ndarray, lo: float, slope: float, gamma: float,
                 / np.maximum(_max3(x)[..., None], 1e-3)
             k = sat * (1.0 + vibrance * 0.6 * np.clip(1.0 - 2.0 * c, 0.0, 1.0))
         x = np.maximum(y + k * (x - y), 0.0)
-    return x
+    return _shadow_guard(x)
+
+
+# Ombres : le rouge ajouté par la compensation et la balance, sous une lumière
+# ambiante bleue, donne du pourpre (rouge et bleu tous deux au-dessus du vert).
+MAGENTA_K = 0.85                     # part du magenta retirée dans les ombres
+SHADOW_Y0, SHADOW_Y1 = 0.30, 0.60    # luminance encodée : pleine action -> aucune
+BLACK_Y = 0.10                       # sous ce niveau, la couleur s'éteint vers le noir
+BLACK_KEEP = 0.35                    # chroma gardée au noir absolu
+
+
+def _shadow_guard(x: np.ndarray) -> np.ndarray:
+    """Retire le magenta des ombres et la teinte des quasi-noirs, à
+    luminance constante."""
+    y = x @ LUMA_E
+    w = np.clip((SHADOW_Y1 - y) / (SHADOW_Y1 - SHADOW_Y0), 0.0, 1.0)
+    m = np.maximum(np.minimum(x[..., 0], x[..., 2]) - x[..., 1], 0.0) * w * MAGENTA_K
+    if m.any():
+        x = x.copy()
+        x[..., 0] -= m
+        x[..., 2] -= m
+        y2 = np.maximum(x @ LUMA_E, 1e-5)
+        x *= (y / y2)[..., None]
+    kb = BLACK_KEEP + (1.0 - BLACK_KEEP) * np.clip(y / BLACK_Y, 0.0, 1.0)
+    yy = y[..., None]
+    return np.maximum(yy + kb[..., None] * (x - yy), 0.0)
 
 
 SHOULDER_KNEE = 0.80
@@ -448,6 +510,10 @@ class Plan:
     clar_ab: Tuple[np.ndarray, np.ndarray]
     clarity: float
     stats: dict
+    # Transmission très lissée (copie réduite) qui module la couleur : les
+    # gains et la compensation ne suivent pas les marbrures de la carte fine,
+    # sinon l'eau uniforme se tache de rose et de vert.
+    tcol: Optional[np.ndarray] = None
 
     def info(self) -> dict:
         d = dict(self.stats)
@@ -534,15 +600,21 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
 
     # 4. Restauration + gains et compensation spatialement variables
     keep = s.water_keep
-    lin = decode_linear(_compensate(enc0, comp, _near_weight(t, keep)))
-    rec = _restore(lin, t, water, g, keep, s)
+    tcol = smooth_t(t)
+    lin = decode_linear(_compensate(enc0, comp, _near_weight(tcol, keep)))
+    rec = _restore(lin, t, water, g, keep, s, tcol)
     t_far = float(np.percentile(t, 5))
 
     # 5. Tonalité : rien n'est coupé net.  Mise à l'échelle linéaire pour
     # que les hautes lumières tiennent, niveaux bornés (étirement ≤ stretch),
     # auto-gamma modéré, puis épaule douce des hautes lumières.
+    # L'échelle se règle sur les hautes lumières *non brûlées* de l'original :
+    # soleil et reflets écrêtés (blanchis plus loin par _clip_weight), dont le
+    # rouge a été multiplié par la balance, assombrissaient toute l'image.
     mx = _max3(rec)
-    pre = float(1.0 / max(1.0, float(np.percentile(mx, 99.8))))
+    ok = _max3(enc0) < 0.95
+    ref = mx[ok] if ok.mean() > 0.5 else mx
+    pre = float(1.0 / max(1.0, float(np.percentile(ref, PRE_PCT))))
     enc = encode_srgb(rec * pre)
     Y = enc.reshape(-1, 3) @ LUMA_E
     # Point noir : on ne retire qu'une part (black_level) du « plancher » de
@@ -551,8 +623,14 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     hi = float(np.percentile(_max3(enc), 100.0 - s.white_clip))
     slope = float(min(1.0 / max(hi - lo, 1e-3), s.stretch))
     med = float(np.median(np.clip((Y - lo) * slope, 0, 1)))
-    g_auto = float(np.clip(np.log(MID_TARGET) / np.log(min(max(med, 0.02), 0.98)),
-                           0.8, 1.25))
+    # Cible des tons moyens : 0,42, mais une photo claire à l'origine (eau
+    # lumineuse, épave dans une eau laiteuse) n'est pas assombrie bien
+    # en dessous de sa luminosité d'origine.
+    y0_med = float(np.median(enc0.reshape(-1, 3) @ LUMA_E))
+    target = max(MID_TARGET, min(y0_med - MID_DROP, 0.55))
+    g_min = 0.8 if target <= MID_TARGET else 0.68
+    g_auto = float(np.clip(np.log(target) / np.log(min(max(med, 0.02), 0.98)),
+                           g_min, 1.25))
     gamma = g_auto * float(2.0 ** (-0.5 * s.exposure))
     tgain = (np.exp(np.array([0.10, 0.0, -0.10]) * s.temperature)
              * np.exp(np.array([0.05, -0.08, 0.05]) * s.tint)).astype(np.float32)
@@ -568,11 +646,11 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
         "water_flat": round(flat, 4),
         "water_wb": [round(float(v), 4) for v in A_wb],
         "t_far": round(t_far, 3),
-        "auto_keep": round(choose_keep(enc0, t, comp, water, g, s), 3),
+        "auto_keep": round(choose_keep(enc0, tcol, comp, water, g, s), 3),
     }
     return Plan(settings=s, comp=comp, gains=g, water=water, keep=keep,
                 t_ab=t_ab, pre=pre, lo=lo, slope=slope, gamma=gamma, tgain=tgain,
-                clar_ab=clar_ab, clarity=1.2 * s.contrast, stats=stats)
+                clar_ab=clar_ab, clarity=1.2 * s.contrast, stats=stats, tcol=tcol)
 
 
 # ---------------------------------------------------------------------------
@@ -586,8 +664,10 @@ def _apply_strip(part: np.ndarray, plan: Plan, full_hw: Tuple[int, int],
     guide = guide_of(enc0)
     t = np.clip(upsample_rows(plan.t_ab[0], full_hw, y0, y1) * guide
                 + upsample_rows(plan.t_ab[1], full_hw, y0, y1), 0.0, 1.0)
-    lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(t, plan.keep)))
-    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s)
+    tc = (t if plan.tcol is None
+          else np.clip(upsample_rows(plan.tcol, full_hw, y0, y1), 0.0, 1.0))
+    lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(tc, plan.keep)))
+    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tc)
     enc = _post(encode_srgb(rec * plan.pre), plan.lo, plan.slope, plan.gamma,
                 plan.tgain, s.saturation, _clip_weight(enc0),
                 s.shadows, s.vibrance)
@@ -660,9 +740,13 @@ def refresh_maps(plan: Plan, img: np.ndarray,
         t_ab = (smooth * prev.t_ab[0] + (1 - smooth) * t_ab[0],
                 smooth * prev.t_ab[1] + (1 - smooth) * t_ab[1])
     t = np.clip(t_ab[0] * guide + t_ab[1], 0.0, 1.0)
+    tcol = smooth_t(t)
+    if prev is not None and smooth > 0 and prev.tcol is not None \
+            and prev.tcol.shape == tcol.shape:
+        tcol = smooth * prev.tcol + (1 - smooth) * tcol
 
-    lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(t, plan.keep)))
-    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s)
+    lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(tcol, plan.keep)))
+    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tcol)
     out = shoulder(_post(encode_srgb(rec * plan.pre), plan.lo, plan.slope,
                          plan.gamma, plan.tgain, s.saturation, _clip_weight(enc0),
                 s.shadows, s.vibrance))
@@ -674,7 +758,7 @@ def refresh_maps(plan: Plan, img: np.ndarray,
     return Plan(settings=s, comp=plan.comp, gains=plan.gains, water=plan.water,
                 keep=plan.keep, t_ab=t_ab, pre=plan.pre, lo=plan.lo, slope=plan.slope,
                 gamma=plan.gamma, tgain=plan.tgain, clar_ab=clar_ab,
-                clarity=plan.clarity, stats=plan.stats)
+                clarity=plan.clarity, stats=plan.stats, tcol=tcol)
 
 
 def merge_plans(plans) -> Plan:
@@ -691,4 +775,4 @@ def merge_plans(plans) -> Plan:
                 slope=float(np.median([p.slope for p in plans])),
                 gamma=float(np.median([p.gamma for p in plans])),
                 tgain=p0.tgain, clar_ab=p0.clar_ab, clarity=p0.clarity,
-                stats=p0.stats)
+                stats=p0.stats, tcol=p0.tcol)

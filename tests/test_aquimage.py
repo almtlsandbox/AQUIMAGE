@@ -481,3 +481,43 @@ def test_reveal(tmp_path, monkeypatch, img):
         assert str(tmp_path) in calls[0] and str(f) not in calls[0]   # fichier -> son dossier
     with pytest.raises(FileNotFoundError):
         server.reveal(str(tmp_path / "absent"))
+
+
+# ---------------------------------------------------------------- v1.6 : retours Mer Rouge (2)
+def test_shadow_guard_removes_magenta_keeps_bright_purple():
+    x = np.zeros((2, 1, 3), np.float32)
+    x[0, 0] = [0.30, 0.15, 0.32]          # ombre pourpre
+    x[1, 0] = [0.80, 0.45, 0.85]          # sujet clair réellement mauve
+    y = core._shadow_guard(x.copy())
+    m0 = min(y[0, 0, 0], y[0, 0, 2]) - y[0, 0, 1]
+    assert m0 < 0.25 * (min(0.30, 0.32) - 0.15)
+    assert np.allclose(y[1, 0], x[1, 0], atol=1e-3)
+    lum = lambda v: float(v @ core.LUMA_E)
+    assert abs(lum(y[0, 0]) - lum(x[0, 0])) < 2e-3
+
+
+def test_near_black_not_tinted():
+    x = np.full((1, 1, 3), [0.06, 0.01, 0.02], np.float32)   # noir bordeaux
+    y = core._shadow_guard(x)
+    c = lambda v: float(v.max() - v.min())
+    assert c(y[0, 0]) < 0.75 * c(x[0, 0])
+
+
+def test_open_water_gradient_detected():
+    h, w = 400, 600
+    y = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+    top, bot = np.array([0.30, 0.55, 0.85]), np.array([0.08, 0.18, 0.45])
+    img = ((top * (1 - y) + bot * y) * np.ones((1, w, 1))).astype(np.float32)
+    img = (np.clip(img + np.random.default_rng(0).normal(0, 0.004, img.shape), 0, 1) * 255).astype(np.uint8)
+    s, d = autotune.auto_settings(img)
+    assert "openwater" in d["scene"]
+    out = core.apply_plan(img, core.build_plan(img, s)).astype(float).mean(axis=(0, 1))
+    assert out[1] > 1.15 * out[0]          # l'eau reste azur, pas indigo
+
+
+def test_clipped_highlights_do_not_darken(img):
+    base = core.apply_plan(img, core.build_plan(img, autotune.auto_settings(img)[0]))
+    sun = img.copy()
+    sun[:12, :40] = 255                     # petit soleil écrêté
+    out = core.apply_plan(sun, core.build_plan(sun, autotune.auto_settings(sun)[0]))
+    assert np.median(out[40:]) > np.median(base[40:]) - 6
