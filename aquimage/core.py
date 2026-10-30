@@ -43,7 +43,8 @@ STRIP_ROWS = 256                 # hauteur des bandes pour apply_plan
 LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)    # linéaire Rec.709
 LUMA_E = np.array([0.299, 0.587, 0.114], np.float32)     # encodé (Rec.601)
 PRE_PCT = 99.5                   # centile des hautes lumières tenu sous l'épaule
-MID_DROP = 0.04                  # assombrissement toléré des tons moyens
+HAZE_FLOOR0, HAZE_FLOOR_SPAN, HAZE_BLACK = 0.08, 0.12, 0.85   # plancher laiteux
+MID_DROP = 0.08                  # assombrissement toléré des tons moyens
 MID_TARGET = 0.42                # luminance médiane visée par l'auto-gamma
 
 
@@ -284,6 +285,16 @@ def water_quadtree(img: np.ndarray, prior: np.ndarray, gray: np.ndarray,
 # Étapes élémentaires (identiques sur la copie réduite et à pleine taille)
 # ---------------------------------------------------------------------------
 
+SIG_Y0, SIG_Y1 = 0.002, 0.03   # luminance linéaire : aucun signal -> signal suffisant
+
+
+def signal_weight(y_lin: np.ndarray) -> np.ndarray:
+    """0 là où l'original n'a quasiment pas de lumière (le rouge n'y est que
+    du bruit), 1 dès qu'il y a assez de signal pour corriger la couleur."""
+    x = np.clip((y_lin - SIG_Y0) / (SIG_Y1 - SIG_Y0), 0.0, 1.0)
+    return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
+
+
 def _compensate(enc: np.ndarray, comp: np.ndarray,
                 weight: Optional[np.ndarray] = None) -> np.ndarray:
     """Compensation d'Ancuti.  comp = (k_R, k_B) = α·(Ḡ − R̄), α·(Ḡ − B̄).
@@ -292,7 +303,12 @@ def _compensate(enc: np.ndarray, comp: np.ndarray,
     proches, réduite dans l'eau lointaine (sinon halo jaune au soleil).
     """
     out = enc.copy()
-    G = enc[..., 1] if weight is None else enc[..., 1] * weight
+    if weight is None:
+        G = enc[..., 1]
+    else:
+        # Pas de rouge inventé dans le quasi-noir (sinon noirs bordeaux)
+        sig = signal_weight(decode_linear(enc) @ LUMA)
+        G = enc[..., 1] * weight * sig
     if comp[0] > 0:
         R = enc[..., 0]
         out[..., 0] = R + comp[0] * (1.0 - R) * G
@@ -303,6 +319,7 @@ def _compensate(enc: np.ndarray, comp: np.ndarray,
 
 
 CHROMA_T0, CHROMA_T1 = 0.25, 0.60   # couleur restaurée : nulle au loin, pleine de près
+TEX_SIGMA = 0.03         # étalement de la texture (petit : pas de halo autour des sujets)
 TCOL_SIGMA = 0.10        # lissage de la transmission « couleur » (part du petit côté)
 
 
@@ -321,6 +338,28 @@ def far_weight(t: np.ndarray) -> np.ndarray:
     """0 sur les sujets proches, 1 dans l'eau lointaine (transition douce)."""
     x = np.clip((FAR_T1 - t) / (FAR_T1 - FAR_T0), 0.0, 1.0)
     return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
+
+
+FLAT_SD = 0.06            # écart-type local de luminance au-delà duquel c'est un sujet
+
+
+def color_t(t: np.ndarray, guide: np.ndarray) -> np.ndarray:
+    """Transmission « couleur » : t lissée, mais les zones texturées (récif,
+    épave) comptent comme proches même si elles sont loin : seule l'eau,
+    lisse, garde sa teinte."""
+    r = max(3, int(round(0.02 * min(guide.shape))))
+    mu = cv2.blur(guide, (r, r))
+    sd = np.sqrt(np.maximum(cv2.blur(guide * guide, (r, r)) - mu * mu, 0.0))
+    tex = np.clip(sd / FLAT_SD, 0.0, 1.0).astype(np.float32)
+    # Un contour isolé (silhouette sur l'eau) n'est pas une zone texturée :
+    # l'érosion l'efface, un récif ou une épave résiste.
+    k = _odd(0.05 * min(tex.shape[:2]))
+    tex = cv2.erode(tex, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    sig = max(2.0, TEX_SIGMA * min(tex.shape[:2]))
+    tex = cv2.GaussianBlur(tex.astype(np.float32), (0, 0), sig,
+                           borderType=cv2.BORDER_REFLECT)
+    tc = smooth_t(t)
+    return (tc + (1.0 - tc) * tex).astype(np.float32)
 
 
 def _near_weight(t: np.ndarray, keep: float) -> np.ndarray:
@@ -393,11 +432,13 @@ def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
         y_lin = np.maximum(lin @ LUMA, 1e-6)
         rec_lum = lin * (y_rec / y_lin)[..., None]
         rec = rec_lum + wcol * (rec - rec_lum)
-    if keep > 0:
-        expo = (1.0 - keep * far_weight(tg))[..., None]
-        G = np.exp(np.log(gains)[None, None, :] * expo)
-    else:
-        G = gains[None, None, :]
+    expo = (1.0 - keep * far_weight(tg)) if keep > 0 else np.ones(t.shape, np.float32)
+    # Sans signal, on n'amplifie pas (le rouge n'y est que du bruit) ; les
+    # réductions de canal, elles, restent appliquées (sinon teinte lavande).
+    lg = np.log(gains)[None, None, :]
+    sig = signal_weight(np.maximum(lin @ LUMA, 0.0))[..., None]
+    lg = np.where(lg > 0, lg * sig, lg)
+    G = np.exp(lg * expo[..., None])
     return np.maximum(rec, 0.0) * G
 
 
@@ -600,7 +641,7 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
 
     # 4. Restauration + gains et compensation spatialement variables
     keep = s.water_keep
-    tcol = smooth_t(t)
+    tcol = color_t(t, guide)
     lin = decode_linear(_compensate(enc0, comp, _near_weight(tcol, keep)))
     rec = _restore(lin, t, water, g, keep, s, tcol)
     t_far = float(np.percentile(t, 5))
@@ -619,7 +660,14 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     Y = enc.reshape(-1, 3) @ LUMA_E
     # Point noir : on ne retire qu'une part (black_level) du « plancher » de
     # luminance ; retirer tout donne des noirs durs et un bruit visible.
-    lo = (s.black_level * float(np.percentile(Y, s.black_clip))) if s.black_clip > 0 else 0.0
+    floor = float(np.percentile(Y, s.black_clip)) if s.black_clip > 0 else 0.0
+    # Eau laiteuse (épave, eau verte) : plancher haut -> on en retire davantage,
+    # sinon les « noirs » restent gris et l'image paraît délavée.
+    # (pas en pleine eau, réglée sans étirement : son plancher est l'eau elle-même)
+    haze = float(np.clip((floor - HAZE_FLOOR0) / HAZE_FLOOR_SPAN, 0.0, 1.0)) \
+        if s.stretch > 1.5 else 0.0
+    bl = s.black_level + (HAZE_BLACK - s.black_level) * haze
+    lo = max(s.black_level, bl) * floor
     hi = float(np.percentile(_max3(enc), 100.0 - s.white_clip))
     slope = float(min(1.0 / max(hi - lo, 1e-3), s.stretch))
     med = float(np.median(np.clip((Y - lo) * slope, 0, 1)))
@@ -628,7 +676,8 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     # en dessous de sa luminosité d'origine.
     y0_med = float(np.median(enc0.reshape(-1, 3) @ LUMA_E))
     target = max(MID_TARGET, min(y0_med - MID_DROP, 0.55))
-    g_min = 0.8 if target <= MID_TARGET else 0.68
+    # Noirs francs (eau laiteuse) : les tons moyens peuvent remonter davantage
+    g_min = max(0.66, (0.8 if target <= MID_TARGET else 0.74) - 0.14 * haze)
     g_auto = float(np.clip(np.log(target) / np.log(min(max(med, 0.02), 0.98)),
                            g_min, 1.25))
     gamma = g_auto * float(2.0 ** (-0.5 * s.exposure))
@@ -740,7 +789,7 @@ def refresh_maps(plan: Plan, img: np.ndarray,
         t_ab = (smooth * prev.t_ab[0] + (1 - smooth) * t_ab[0],
                 smooth * prev.t_ab[1] + (1 - smooth) * t_ab[1])
     t = np.clip(t_ab[0] * guide + t_ab[1], 0.0, 1.0)
-    tcol = smooth_t(t)
+    tcol = color_t(t, guide)
     if prev is not None and smooth > 0 and prev.tcol is not None \
             and prev.tcol.shape == tcol.shape:
         tcol = smooth * prev.tcol + (1 - smooth) * tcol

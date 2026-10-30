@@ -111,16 +111,38 @@ Ce que l'auto-réglage détecte, image par image :
 | Ombres virant au violet | Balance des blancs réduite automatiquement |
 
 Quelle que soit la photo, quatre garde-fous s'appliquent aussi :
-- **Eau lointaine :** elle garde sa teinte bleue. Seuls les sujets proches sont corrigés en entier, avec une transition douce entre les deux.
+- **Eau lointaine :** l'eau lisse et lointaine garde sa teinte bleue. Les sujets texturés (récif, épave) sont corrigés en entier, même au loin.
 - **Couleur au loin :** elle suit une carte de distance lissée. Au loin, seule la luminance est restaurée : le plancton, les bulles et le bruit ne deviennent pas des taches roses ou vertes.
-- **Ombres et quasi-noirs :** le magenta est retiré des ombres, et les quasi-noirs perdent leur teinte (plus de noirs bordeaux dans les épaves).
+- **Ombres et quasi-noirs :** le rouge n'est pas amplifié là où l'original n'a pas de lumière (plus de noirs bordeaux dans les épaves). Le magenta est retiré des ombres.
 - **Luminosité :** une photo claire à l'origine n'est pas assombrie, et les reflets écrêtés (soleil) ne dictent plus l'exposition.
+- **Eau laiteuse :** quand le plancher de luminance est haut (épave en eau verte), le point noir est abaissé davantage, pour éviter un rendu délavé.
 
 Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté. Ces règles ont été calibrées sur 35 photos réelles, puis validées sur 40 photos d'un voyage en mer Rouge (SeaLife DC2000), et sur 24 scènes simulées dont on connaît la vraie couleur.
 
 **Limite connue :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
 
 ## Historique
+
+### 1.6.1
+
+Corrections après examen de DSCI1795 (intérieur d'épave) et DSCI2065 (épave en eau verte), mal rendus par la 1.6.0.
+
+- **Noirs bordeaux :** la 1.6.0 les aggravait. Le garde-fou ne visait que le magenta des quasi-noirs, alors que le rouge venait du bruit amplifié. Désormais, les gains qui amplifient un canal (rouge surtout) et la compensation s'éteignent là où l'original n'a presque pas de lumière ; les réductions de canal restent appliquées.
+- **Épaves et récifs lointains :** ils sont de nouveau corrigés en entier. Seule l'eau lisse garde sa teinte. Un contour isolé (silhouette sur l'eau) ne compte pas comme une texture, ce qui évite un halo.
+- **Eau laiteuse :** le point noir est plus bas, et les tons moyens peuvent remonter davantage, pour éviter le rendu délavé.
+
+Sur les 1 045 photos du voyage :
+
+| Défaut (nombre de photos) | 1.4 | 1.6.0 | 1.6.1 | Original |
+| --- | --- | --- | --- | --- |
+| Ombres pourpres ou magenta | 73 | 12 | 11 | 9 |
+| Ombres rouges ou brique | 45 | 51 | 43 | 45 |
+| Noirs laiteux | 42 | 69 | 34 | 226 |
+| Assombries de plus de 10 points | 43 | 3 | 8 | — |
+| Assombries de plus de 5 points | 150 | 48 | 92 | — |
+| Bruit doublé ou plus | 151 | 120 | 153 | — |
+
+![Original, 1.4, 1.6.0 et 1.6.1](docs/mer-rouge-v1.6.jpg)
 
 ### 1.6.0
 
@@ -144,7 +166,6 @@ Sur un échantillon de 40 photos, la part de pixels pourpres passe de 1,9 % à 0
   - l'auto-gamma n'assombrit plus nettement une photo claire.
 - **Pleine eau :** elle est aussi détectée quand l'eau est en dégradé. Elle ne vire plus à l'indigo.
 
-![Original, 1.4 et 1.6](docs/mer-rouge-v1.6.jpg)
 
 ### 1.5.0
 
