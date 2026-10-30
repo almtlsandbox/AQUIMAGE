@@ -121,16 +121,12 @@
       <p class="strip-dir" id="strip-dir" data-i18n="strip.none">Aucun dossier</p>
       <button type="button" class="btn small" id="strip-pick" data-i18n="strip.change">Changer</button>
     </div>
-    <div class="filters strip-filters" id="strip-filters">
-      <div class="seg" role="group" data-group="done">
-        <button type="button" data-f="all" aria-pressed="true"></button>
-        <button type="button" data-f="todo" aria-pressed="false" data-i18n-title="f.strip_todo_title"></button>
-      </div>
-      <div class="seg" role="group" data-group="kind">
-        <button type="button" data-f="all" aria-pressed="true"></button>
-        <button type="button" data-f="image" aria-pressed="false"></button>
-        <button type="button" data-f="video" aria-pressed="false"></button>
-      </div>
+    <div class="strip-filters" id="strip-filters">
+      <select id="sf-kind" data-i18n-aria="f.kind_aria" aria-label="Type de fichier">
+        <option value="all"></option><option value="image"></option><option value="video"></option>
+      </select>
+      <label class="sf-hide"><input type="checkbox" id="sf-hide"> <span id="sf-hide-l"></span></label>
+      <p class="sf-count" id="sf-count"></p>
     </div>
     <ul class="thumbs" id="thumbs"></ul>
   </aside>

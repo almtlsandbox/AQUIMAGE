@@ -31,7 +31,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - **Réglages identiques pour tous :** cette option reprend les réglages faits dans l'atelier sur une photo.
 - **Rapport :** `aquimage_rapport.csv` est écrit dans la destination. Il contient, pour chaque fichier, le type d'image détecté, les réglages retenus, la durée et les erreurs éventuelles. Il s'ouvre dans Excel.
 - **Ouvrir le dossier de sortie :** ce bouton, à droite de la barre de progression, ouvre la destination dans l'Explorateur Windows.
-- **Filtres :** pendant et après le lot, la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos). Chaque bouton indique son nombre de fichiers.
+- **Filtres :** pendant et après le lot, la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos). Chaque bouton indique le nombre total de fichiers de sa catégorie.
 - **Dossiers de sortie :** un dossier nommé `AquImage`, ou contenant un rapport, n'est jamais retraité.
 
 ## Atelier : une photo à la fois
@@ -39,7 +39,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - La colonne de gauche montre les photos et vidéos du dossier. Les flèches du clavier passent à la suivante.
 - Faites glisser le séparateur orange pour comparer l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
 - La molette zoome et le glisser déplace l'image. Un double-clic ajuste l'image à la fenêtre.
-- **Filtres de la colonne :** « À corriger » masque les fichiers qui ont déjà une version dans le dossier « Enregistrer dans » ; ceux-là portent une coche ✓. « Photos » et « Vidéos » filtrent par type. Les flèches du clavier ne parcourent que les fichiers affichés, et les filtres choisis sont mémorisés.
+- **Filtres de la colonne :** le menu choisit le type (photos et vidéos, photos seules, vidéos seules). La case « Masquer les déjà enregistrées » cache les fichiers qui ont déjà une version dans le dossier « Enregistrer dans » ; ceux-là portent une coche ✓. Les nombres indiqués ne dépendent pas de l'autre filtre. Les flèches du clavier ne parcourent que les fichiers affichés, et les choix sont mémorisés.
 - **Rotation :** les boutons ↺ ↻ sous l'image, ou les touches **R** (sens horaire) et **Maj+R** (sens inverse), tournent la photo ou la vidéo par quarts de tour. La rotation est appliquée au fichier enregistré ou à la vidéo exportée. Elle repart de zéro à chaque nouvelle photo et ne s'applique pas au lot.
 - Les curseurs partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
 - **L'aperçu est fidèle à l'export :** les réglages ne dépendent pas de la résolution. L'écart mesuré entre l'aperçu et l'export pleine résolution est de 0,85 niveau sur 255.
@@ -122,6 +122,11 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 **Limite connue :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
 
 ## Historique
+
+### 1.6.2
+
+- **Atelier :** le filtre de la colonne est simplifié : un menu pour le type, et une case « Masquer les déjà enregistrées ». Il n'y a plus deux boutons « Tous » et « Tout », et les nombres ne changent plus selon l'autre filtre.
+- **Lot :** les nombres des filtres sont fixes. Le bouton de type s'appelle « Photos et vidéos ».
 
 ### 1.6.1
 

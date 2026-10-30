@@ -99,10 +99,14 @@ function countText(img, vid, where = "") {
 /* ----------------------------------------------------------------- filtres */
 /* Barres de filtres à boutons segmentés. state = {groupe: valeur}. */
 const FILTERS = (() => {
-  const def = { lot: { status: "all", kind: "all" }, strip: { done: "all", kind: "all" } };
+  const def = { lot: { status: "all", kind: "all" }, strip: { hideDone: false, kind: "all" } };
   try {
     const v = JSON.parse(localStorage.getItem("aquimage.filters") || "null");
-    if (v && v.lot && v.strip) return { lot: { ...def.lot, ...v.lot }, strip: { ...def.strip, ...v.strip } };
+    if (v && v.lot && v.strip) {
+      const st = { ...def.strip, kind: v.strip.kind || "all",
+                   hideDone: v.strip.hideDone ?? v.strip.done === "todo" };
+      return { lot: { ...def.lot, ...v.lot }, strip: st };
+    }
   } catch (e) {}
   return def;
 })();
@@ -335,8 +339,9 @@ const Lot = {
       const g = this.group(it.status);
       const okS = F.status === "all" || F.status === g;
       const okK = F.kind === "all" || F.kind === it.kind;
-      if (okK) { counts.status.all++; counts.status[g]++; }
-      if (okS) { counts.kind.all++; counts.kind[it.kind]++; }
+      // Nombres fixes : chaque bouton compte tous les fichiers de sa catégorie
+      counts.status.all++; counts.status[g]++;
+      counts.kind.all++; counts.kind[it.kind]++;
       const li = this.rows[i];
       if (li) { li.hidden = !(okS && okK); if (!li.hidden) shown++; }
     });
@@ -481,7 +486,10 @@ const Atelier = {
     $("#vpos").addEventListener("change", e => this.frame(Number(e.target.value)));
     $("#rot-l").addEventListener("click", () => this.rotate(-1));
     $("#rot-r").addEventListener("click", () => this.rotate(1));
-    initSeg($("#strip-filters"), FILTERS.strip, () => this.applyFilter());
+    $("#sf-kind").value = FILTERS.strip.kind;
+    $("#sf-hide").checked = !!FILTERS.strip.hideDone;
+    $("#sf-kind").addEventListener("change", e => { FILTERS.strip.kind = e.target.value; saveFilters(); this.applyFilter(); });
+    $("#sf-hide").addEventListener("change", e => { FILTERS.strip.hideDone = e.target.checked; saveFilters(); this.applyFilter(); });
     $("#a-dst").addEventListener("change", () => { if (this.dir) this.loadDir(this.dir); });
     $("#thumbs").addEventListener("click", e => {
       const li = e.target.closest("li[data-path]");
@@ -542,7 +550,7 @@ const Atelier = {
   },
   visible(f) {
     const F = FILTERS.strip;
-    return (F.kind === "all" || F.kind === f.kind) && (F.done === "all" || !f.done);
+    return (F.kind === "all" || F.kind === f.kind) && (!F.hideDone || !f.done);
   },
   markDone(f, li) {
     li = li || $$("#thumbs li").find(x => x.dataset.path === f.path);
@@ -556,21 +564,25 @@ const Atelier = {
     if (b) { b.hidden = !f.done; b.title = T("f.done_badge"); }
   },
   applyFilter() {
-    const F = FILTERS.strip;
-    const counts = { done: { all: 0, todo: 0 }, kind: { all: 0, image: 0, video: 0 } };
-    const lis = $$("#thumbs li[data-path]");
+    const n = { all: 0, image: 0, video: 0, done: 0 };
+    const byPath = new Map($$("#thumbs li[data-path]").map(li => [li.dataset.path, li]));
+    let shown = 0;
     for (const f of this.files) {
-      const okK = F.kind === "all" || F.kind === f.kind;
-      const okD = F.done === "all" || !f.done;
-      if (okK) { counts.done.all++; if (!f.done) counts.done.todo++; }
-      if (okD) { counts.kind.all++; counts.kind[f.kind]++; }
-      const li = lis.find(x => x.dataset.path === f.path);
+      n.all++; n[f.kind]++; if (f.done) n.done++;
+      const vis = this.visible(f) || (this.sess && this.sess.path === f.path);
+      const li = byPath.get(f.path);
       // Le fichier ouvert reste visible, même s'il vient d'être enregistré
-      if (li) li.hidden = !(okK && okD) && !(this.sess && this.sess.path === f.path);
+      if (li) li.hidden = !vis;
+      if (vis) shown++;
     }
-    paintSeg($("#strip-filters"), F, {
-      done: { all: "f.all", todo: "f.strip_todo" }, kind: KIND_LABELS,
-    }, counts);
+    const sel = $("#sf-kind");
+    sel.options[0].textContent = T("f.opt_all", { n: n.all });
+    sel.options[1].textContent = T("f.opt_img", { n: n.image });
+    sel.options[2].textContent = T("f.opt_vid", { n: n.video });
+    $("#sf-hide-l").textContent = T("f.hide_done", { n: n.done });
+    $("#sf-hide").disabled = !n.done && !FILTERS.strip.hideDone;
+    $("#sf-count").textContent = this.files.length && shown !== n.all
+      ? TP("f.shown", shown, { total: n.all }) : "";
   },
   showReveal(out) {
     this.lastOut = out;

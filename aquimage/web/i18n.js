@@ -8,8 +8,9 @@ const LANGS = { fr: "Français", en: "English", es: "Español", de: "Deutsch" };
 const STRINGS = {
 /* =============================================================== FRANÇAIS */
 fr: {
-  "f.all": "Tous", "f.todo": "À traiter", "f.ok": "Corrigés", "f.skip": "Ignorés", "f.err": "Erreurs", "f.allkinds": "Tout", "f.photos": "Photos", "f.videos": "Vidéos", "f.strip_todo": "À corriger", "f.strip_todo_title": "Pas encore enregistrées dans le dossier « Enregistrer dans »", "f.done_badge": "Déjà enregistrée dans le dossier de destination", "f.none": "Aucun fichier ne correspond à ce filtre.",
+  "f.all": "Tous", "f.todo": "À traiter", "f.ok": "Corrigés", "f.skip": "Ignorés", "f.err": "Erreurs",  "f.photos": "Photos", "f.videos": "Vidéos", "f.done_badge": "Déjà enregistrée dans le dossier de destination", "f.none": "Aucun fichier ne correspond à ce filtre.",
   "o.open_dst": "Ouvrir le dossier de sortie", "o.reveal": "Ouvrir le dossier",
+  "f.allkinds": "Photos et vidéos", "f.kind_aria": "Type de fichier", "f.opt_all": "Photos et vidéos ({n})", "f.opt_img": "Photos ({n})", "f.opt_vid": "Vidéos ({n})", "f.hide_done": "Masquer les déjà enregistrées ({n})", "f.shown_one": "{n} affichée sur {total}", "f.shown_other": "{n} affichées sur {total}",
   "tab.lot": "Lot", "tab.atelier": "Atelier", "lang.label": "Langue",
   "lot.src": "Dossier des originaux", "lot.src_ph": "D:\\Plongées\\2026-10 Mer Rouge",
   "lot.dst": "Dossier des fichiers corrigés", "lot.dst_ph": "D:\\Plongées\\2026-10 Mer Rouge\\corrigées",
@@ -90,8 +91,9 @@ fr: {
 },
 /* ================================================================ ENGLISH */
 en: {
-  "f.all": "All", "f.todo": "To do", "f.ok": "Corrected", "f.skip": "Skipped", "f.err": "Errors", "f.allkinds": "All", "f.photos": "Photos", "f.videos": "Videos", "f.strip_todo": "To correct", "f.strip_todo_title": "Not yet saved in the “Save to” folder", "f.done_badge": "Already saved in the destination folder", "f.none": "No files match this filter.",
+  "f.all": "All", "f.todo": "To do", "f.ok": "Corrected", "f.skip": "Skipped", "f.err": "Errors",  "f.photos": "Photos", "f.videos": "Videos", "f.done_badge": "Already saved in the destination folder", "f.none": "No files match this filter.",
   "o.open_dst": "Open output folder", "o.reveal": "Show in folder",
+  "f.allkinds": "Photos & videos", "f.kind_aria": "File type", "f.opt_all": "Photos & videos ({n})", "f.opt_img": "Photos ({n})", "f.opt_vid": "Videos ({n})", "f.hide_done": "Hide those already saved ({n})", "f.shown_one": "{n} shown of {total}", "f.shown_other": "{n} shown of {total}",
   "tab.lot": "Batch", "tab.atelier": "Workshop", "lang.label": "Language",
   "lot.src": "Originals folder", "lot.src_ph": "D:\\Dives\\2026-10 Red Sea",
   "lot.dst": "Corrected files folder", "lot.dst_ph": "D:\\Dives\\2026-10 Red Sea\\corrected",
@@ -172,8 +174,9 @@ en: {
 },
 /* ================================================================ ESPAÑOL */
 es: {
-  "f.all": "Todos", "f.todo": "Pendientes", "f.ok": "Corregidos", "f.skip": "Omitidos", "f.err": "Errores", "f.allkinds": "Todo", "f.photos": "Fotos", "f.videos": "Vídeos", "f.strip_todo": "Por corregir", "f.strip_todo_title": "Aún no guardadas en la carpeta «Guardar en»", "f.done_badge": "Ya guardada en la carpeta de destino", "f.none": "Ningún archivo coincide con este filtro.",
+  "f.all": "Todos", "f.todo": "Pendientes", "f.ok": "Corregidos", "f.skip": "Omitidos", "f.err": "Errores",  "f.photos": "Fotos", "f.videos": "Vídeos", "f.done_badge": "Ya guardada en la carpeta de destino", "f.none": "Ningún archivo coincide con este filtro.",
   "o.open_dst": "Abrir la carpeta de salida", "o.reveal": "Mostrar en la carpeta",
+  "f.allkinds": "Fotos y vídeos", "f.kind_aria": "Tipo de archivo", "f.opt_all": "Fotos y vídeos ({n})", "f.opt_img": "Fotos ({n})", "f.opt_vid": "Vídeos ({n})", "f.hide_done": "Ocultar las ya guardadas ({n})", "f.shown_one": "{n} visible de {total}", "f.shown_other": "{n} visibles de {total}",
   "tab.lot": "Lote", "tab.atelier": "Taller", "lang.label": "Idioma",
   "lot.src": "Carpeta de originales", "lot.src_ph": "D:\\Inmersiones\\2026-10 Mar Rojo",
   "lot.dst": "Carpeta de archivos corregidos", "lot.dst_ph": "D:\\Inmersiones\\2026-10 Mar Rojo\\corregidas",
@@ -254,8 +257,9 @@ es: {
 },
 /* ================================================================ DEUTSCH */
 de: {
-  "f.all": "Alle", "f.todo": "Offen", "f.ok": "Korrigiert", "f.skip": "Übersprungen", "f.err": "Fehler", "f.allkinds": "Alle", "f.photos": "Fotos", "f.videos": "Videos", "f.strip_todo": "Zu korrigieren", "f.strip_todo_title": "Noch nicht im Ordner „Speichern in“ gespeichert", "f.done_badge": "Bereits im Zielordner gespeichert", "f.none": "Keine Datei entspricht diesem Filter.",
+  "f.all": "Alle", "f.todo": "Offen", "f.ok": "Korrigiert", "f.skip": "Übersprungen", "f.err": "Fehler",  "f.photos": "Fotos", "f.videos": "Videos", "f.done_badge": "Bereits im Zielordner gespeichert", "f.none": "Keine Datei entspricht diesem Filter.",
   "o.open_dst": "Ausgabeordner öffnen", "o.reveal": "Im Ordner anzeigen",
+  "f.allkinds": "Fotos und Videos", "f.kind_aria": "Dateityp", "f.opt_all": "Fotos und Videos ({n})", "f.opt_img": "Fotos ({n})", "f.opt_vid": "Videos ({n})", "f.hide_done": "Bereits gespeicherte ausblenden ({n})", "f.shown_one": "{n} von {total} angezeigt", "f.shown_other": "{n} von {total} angezeigt",
   "tab.lot": "Stapel", "tab.atelier": "Werkstatt", "lang.label": "Sprache",
   "lot.src": "Ordner mit den Originalen", "lot.src_ph": "D:\\Tauchgänge\\2026-10 Rotes Meer",
   "lot.dst": "Ordner für korrigierte Dateien", "lot.dst_ph": "D:\\Tauchgänge\\2026-10 Rotes Meer\\korrigiert",
