@@ -123,6 +123,22 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 
 ## Historique
 
+### 1.6.3
+
+Retour sur DSCI0898, 0900, 0940 et 0943 : l'eau tirait sur le cyan, et le sable clair restait cyan ou devenait mauve.
+
+- **Eau bleue :** l'eau libre lointaine est orientée vers un bleu azur profond (moins de vert, plus de bleu) quand l'appareil l'a enregistrée trop cyan. Une eau déjà bleue n'est pas touchée.
+- **Bord de l'eau :** l'eau qui longe un récif ou un plongeur, lisse et sans rouge dans l'original, garde aussi sa teinte. Le mauve qui y apparaissait (DSCI0943) disparaît.
+- **Sable :** il est reconnu par son grain, et non plus confondu avec de l'eau. Sur DSCI0900, il redevient beige au lieu de rester cyan.
+- **Tons neutres :** la légère teinte lavande ou rose du sable et de la roche est retirée.
+
+Sur les 1 045 photos, par rapport à la 1.6.2 :
+- eau restée cyan : 52 photos au lieu de 61 (103 dans les originaux) ;
+- ombres pourpres : 6 au lieu de 11 ;
+- bruit doublé : 117 au lieu de 153.
+
+L'eau est plus colorée, avec une saturation médiane de 123 au lieu de 109 (140 dans les originaux). C'est pourquoi l'indicateur de sursaturation monte, de 31 à 51 photos.
+
 ### 1.6.2
 
 - **Atelier :** le filtre de la colonne est simplifié : un menu pour le type, et une case « Masquer les déjà enregistrées ». Il n'y a plus deux boutons « Tous » et « Tout », et les nombres ne changent plus selon l'autre filtre.

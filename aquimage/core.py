@@ -340,17 +340,50 @@ def far_weight(t: np.ndarray) -> np.ndarray:
     return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
 
 
-FLAT_SD = 0.06            # écart-type local de luminance au-delà duquel c'est un sujet
+TEX_LO, TEX_HI = 0.05, 0.09   # texture fine : eau lisse … sujet (sable, récif)
 
 
-def color_t(t: np.ndarray, guide: np.ndarray) -> np.ndarray:
+def fine_texture(guide: np.ndarray) -> np.ndarray:
+    """Texture fine (laplacien moyen) : l'eau, même près de la surface, reste
+    sous 0,05 ; le sable (grain) et le récif sont au-dessus."""
+    r = max(3, int(round(0.014 * min(guide.shape))))
+    return cv2.blur(np.abs(cv2.Laplacian(guide, cv2.CV_32F, ksize=3)), (r, r))
+
+
+OPEN_WATER_MIN = 0.035    # part minimale d'eau lisse et lointaine pour la préserver
+
+
+def open_water_share(t: np.ndarray, guide: np.ndarray) -> float:
+    """Part de l'image faite d'eau libre : lointaine ET lisse.  Un fond de
+    sable clair, que le prior du canal sombre croit lointain, n'en est pas."""
+    return float(((far_weight(smooth_t(t)) > 0.7)
+                  & (fine_texture(guide) < 0.04)).mean())
+
+
+WATER_DARK = 0.25         # l'eau du bord fait au moins 25 % de la luminance de l'eau libre
+WATER_RED = 0.12          # eau bleue : rouge linéaire < 12 % de (vert + bleu)
+
+
+def red_cap_weight(enc0: np.ndarray, guide: np.ndarray) -> np.ndarray:
+    """1 sur les zones lisses dont l'original n'a pas de rouge (copie
+    réduite) ; 0 sur les sujets texturés ou qui ont du rouge."""
+    lin = decode_linear(enc0)
+    red = lin[..., 0] / np.maximum(lin[..., 1] + lin[..., 2], 1e-4)
+    w = (np.clip((WATER_RED - red) / (0.5 * WATER_RED), 0.0, 1.0)
+         * np.clip((TEX_LO - fine_texture(guide)) / (0.5 * TEX_LO), 0.0, 1.0))
+    sig = max(1.0, 0.01 * min(w.shape[:2]))
+    return cv2.GaussianBlur(w.astype(np.float32), (0, 0), sig,
+                            borderType=cv2.BORDER_REFLECT)
+
+
+def color_t(t: np.ndarray, guide: np.ndarray,
+            enc0: Optional[np.ndarray] = None) -> np.ndarray:
     """Transmission « couleur » : t lissée, mais les zones texturées (récif,
     épave) comptent comme proches même si elles sont loin : seule l'eau,
     lisse, garde sa teinte."""
-    r = max(3, int(round(0.02 * min(guide.shape))))
-    mu = cv2.blur(guide, (r, r))
-    sd = np.sqrt(np.maximum(cv2.blur(guide * guide, (r, r)) - mu * mu, 0.0))
-    tex = np.clip(sd / FLAT_SD, 0.0, 1.0).astype(np.float32)
+    # (L'écart-type local confondait le sable clair avec de l'eau.)
+    fine = fine_texture(guide)
+    tex = np.clip((fine - TEX_LO) / (TEX_HI - TEX_LO), 0.0, 1.0).astype(np.float32)
     # Un contour isolé (silhouette sur l'eau) n'est pas une zone texturée :
     # l'érosion l'efface, un récif ou une épave résiste.
     k = _odd(0.05 * min(tex.shape[:2]))
@@ -359,7 +392,40 @@ def color_t(t: np.ndarray, guide: np.ndarray) -> np.ndarray:
     tex = cv2.GaussianBlur(tex.astype(np.float32), (0, 0), sig,
                            borderType=cv2.BORDER_REFLECT)
     tc = smooth_t(t)
-    return (tc + (1.0 - tc) * tex).astype(np.float32)
+    tc = tc + (1.0 - tc) * tex
+    if enc0 is not None:
+        # Eau au bord d'un sujet : lisse et sans rouge dans l'original.  La
+        # texture du récif voisin ne doit pas y faire ajouter de rouge.
+        lin = decode_linear(enc0)
+        red = lin[..., 0] / np.maximum(lin[..., 1] + lin[..., 2], 1e-4)
+        y = lin @ LUMA
+        far = far_weight(tc) > 0.7
+        y_w = float(np.median(y[far])) if far.mean() > 0.01 else 0.0
+        wc = lin[far].mean(axis=0) if far.mean() > 0.01 else np.zeros(3)
+        if not wc[2] > wc[1]:            # eau verte : pas d'extension
+            return tc.astype(np.float32)
+        # Lisse, sans rouge, et pas nettement plus sombre que l'eau (une
+        # combinaison noire ou une roche en silhouette ne sont pas de l'eau)
+        rel = y / max(y_w, 1e-6)
+        cand = ((red < WATER_RED) & (fine < TEX_LO)
+                & (rel > WATER_DARK)).astype(np.uint8)
+        # Seulement l'eau reliée à l'eau libre (reconstruction morphologique
+        # depuis l'eau lointaine sûre) : un trou d'ombre ou une tache de
+        # sable isolés dans le récif ne sont pas de l'eau.
+        seed = (far & (cand > 0)).astype(np.uint8)
+        k3 = np.ones((3, 3), np.uint8)
+        for _ in range(4 * max(cand.shape)):
+            nxt = cv2.dilate(seed, k3) & cand
+            if np.array_equal(nxt, seed):
+                break
+            seed = nxt
+        # Poids progressif (pas de frontière nette entre eau gardée et sujet)
+        wl = seed.astype(np.float32) * np.clip(
+            (rel - WATER_DARK) / WATER_DARK, 0.0, 1.0).astype(np.float32)
+        sig = max(1.0, 0.04 * min(wl.shape[:2]))
+        wl = cv2.GaussianBlur(wl, (0, 0), sig, borderType=cv2.BORDER_REFLECT)
+        tc = tc + (np.minimum(tc, FAR_T0) - tc) * wl
+    return tc.astype(np.float32)
 
 
 def _near_weight(t: np.ndarray, keep: float) -> np.ndarray:
@@ -404,9 +470,42 @@ def choose_keep(enc0: np.ndarray, t: np.ndarray, comp: np.ndarray,
     return float(0.5 * (lo + hi))
 
 
+WATER_TARGET = (25, 110, 205)   # bleu azur profond visé pour l'eau lointaine (sRGB)
+WATER_TONE = 0.6                # part du chemin vers cette teinte
+
+
+def water_tone(rec: np.ndarray, tc: np.ndarray, keep: float) -> np.ndarray:
+    """Facteurs par canal qui orientent l'eau lointaine bleue ou cyan vers un
+    bleu azur profond (l'appareil l'enregistre souvent trop cyan, et la
+    correction la grise).  Luminance conservée ; eau verte non touchée."""
+    one = np.ones(3, np.float32)
+    if keep <= 0:
+        return one
+    m = far_weight(tc) > 0.7
+    if m.mean() < 0.03:
+        return one
+    wc = np.maximum(rec[m].mean(axis=0), 1e-5)
+    if not (wc[2] > wc[1] > wc[0]):          # eau bleue ou cyan seulement
+        return one
+    tgt = decode_linear(np.array(WATER_TARGET, np.float32) / 255.0)
+    # Eau déjà aussi bleue que la cible (rapport bleu/vert) : rien à faire,
+    # sinon elle passerait au violet.
+    if wc[2] / wc[1] >= tgt[2] / tgt[1]:
+        return one
+    tgt = tgt * float(wc @ LUMA) / float(tgt @ LUMA)
+    # On retire du rouge et du vert, on ajoute du bleu ; jamais l'inverse
+    # (sinon l'eau vire au violet).
+    f = np.clip(tgt / wc, 0.5, 2.0) ** WATER_TONE
+    f[0], f[1] = min(f[0], 1.0), min(f[1], 1.0)
+    f[2] = max(f[2], 1.0)
+    return f.astype(np.float32)
+
+
 def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
              gains: np.ndarray, keep: float, s: Settings,
-             tc: Optional[np.ndarray] = None) -> np.ndarray:
+             tc: Optional[np.ndarray] = None,
+             wtone: Optional[np.ndarray] = None,
+             capw: Optional[np.ndarray] = None) -> np.ndarray:
     """Retrait du voile + gains spatialement variables.
 
     W(x) = G(x) · [lin + s·((lin − A)/max(t, t_min) + A − lin)]
@@ -439,7 +538,21 @@ def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
     sig = signal_weight(np.maximum(lin @ LUMA, 0.0))[..., None]
     lg = np.where(lg > 0, lg * sig, lg)
     G = np.exp(lg * expo[..., None])
-    return np.maximum(rec, 0.0) * G
+    if wtone is not None and keep > 0:
+        # Concentré sur l'eau franchement lointaine (pas le récif à mi-distance)
+        G = G * np.exp(np.log(wtone)[None, None, :]
+                       * (keep * far_weight(tg) ** 2)[..., None])
+    out = np.maximum(rec, 0.0) * G
+    if capw is not None:
+        # Zones lisses sans rouge dans l'original (eau, même sombre ou au
+        # bord d'un récif) : le rouge ajouté n'y porte aucune information.
+        # S'il fait passer le pixel au violet (rouge ET bleu au-dessus du
+        # vert), on retire cet excès de rouge.
+        m = np.maximum(np.minimum(out[..., 0], out[..., 2]) - out[..., 1], 0.0)
+        if m.any():
+            out = out.copy()
+            out[..., 0] -= capw * m
+    return out
 
 
 def _clip_weight(enc0: np.ndarray) -> np.ndarray:
@@ -481,6 +594,7 @@ def _post(enc: np.ndarray, lo: float, slope: float, gamma: float,
 MAGENTA_K = 0.85                     # part du magenta retirée dans les ombres
 SHADOW_Y0, SHADOW_Y1 = 0.30, 0.60    # luminance encodée : pleine action -> aucune
 BLACK_Y = 0.10                       # sous ce niveau, la couleur s'éteint vers le noir
+NEUTRAL_C, NEUTRAL_K = 0.25, 0.7    # tons presque neutres : magenta retiré à 70 %
 BLACK_KEEP = 0.35                    # chroma gardée au noir absolu
 
 
@@ -494,6 +608,22 @@ def _shadow_guard(x: np.ndarray) -> np.ndarray:
         x = x.copy()
         x[..., 0] -= m
         x[..., 2] -= m
+        y2 = np.maximum(x @ LUMA_E, 1e-5)
+        x *= (y / y2)[..., None]
+    # Tons presque neutres (sable, roche, épave) à toute luminosité : une
+    # légère teinte lavande vient de la balance, pas de la scène.
+    mx, mn = _max3(x), _min3(x)
+    chroma = (mx - mn) / np.maximum(mx, 1e-3)
+    wn = np.clip((NEUTRAL_C - chroma) / (0.5 * NEUTRAL_C), 0.0, 1.0)
+    m = np.maximum(np.minimum(x[..., 0], x[..., 2]) - x[..., 1], 0.0) * wn * NEUTRAL_K
+    if m.any():
+        x = x.copy()
+        x[..., 0] -= m
+        x[..., 2] -= m
+        # Rose (rouge au-dessus du vert ET du bleu) : même traitement
+        pk = np.maximum(x[..., 0] - np.maximum(x[..., 1], x[..., 2]), 0.0) \
+            * (x[..., 2] > x[..., 1]) * wn * NEUTRAL_K
+        x[..., 0] -= pk
         y2 = np.maximum(x @ LUMA_E, 1e-5)
         x *= (y / y2)[..., None]
     kb = BLACK_KEEP + (1.0 - BLACK_KEEP) * np.clip(y / BLACK_Y, 0.0, 1.0)
@@ -555,6 +685,8 @@ class Plan:
     # gains et la compensation ne suivent pas les marbrures de la carte fine,
     # sinon l'eau uniforme se tache de rose et de vert.
     tcol: Optional[np.ndarray] = None
+    wtone: Optional[np.ndarray] = None   # facteurs de teinte de l'eau lointaine
+    capw: Optional[np.ndarray] = None    # plafond du rouge (zones lisses sans rouge)
 
     def info(self) -> dict:
         d = dict(self.stats)
@@ -640,10 +772,17 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     water = (A_wb / g).astype(np.float32)          # dans l'espace linéaire
 
     # 4. Restauration + gains et compensation spatialement variables
-    keep = s.water_keep
-    tcol = color_t(t, guide)
+    # Pas d'eau libre visible (fond de sable, récif plein cadre) : rien à
+    # préserver, tout est corrigé comme un sujet.
+    open_water = open_water_share(t, guide)
+    keep = s.water_keep if open_water >= OPEN_WATER_MIN else 0.0
+    tcol = color_t(t, guide, enc0 if keep > 0 else None)
+    capw = red_cap_weight(enc0, guide)
     lin = decode_linear(_compensate(enc0, comp, _near_weight(tcol, keep)))
-    rec = _restore(lin, t, water, g, keep, s, tcol)
+    rec = _restore(lin, t, water, g, keep, s, tcol, None, capw)
+    wtone = water_tone(rec, tcol, keep)
+    if not np.allclose(wtone, 1.0):
+        rec = _restore(lin, t, water, g, keep, s, tcol, wtone, capw)
     t_far = float(np.percentile(t, 5))
 
     # 5. Tonalité : rien n'est coupé net.  Mise à l'échelle linéaire pour
@@ -695,11 +834,13 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
         "water_flat": round(flat, 4),
         "water_wb": [round(float(v), 4) for v in A_wb],
         "t_far": round(t_far, 3),
+        "open_water": round(open_water, 3),
         "auto_keep": round(choose_keep(enc0, tcol, comp, water, g, s), 3),
     }
     return Plan(settings=s, comp=comp, gains=g, water=water, keep=keep,
                 t_ab=t_ab, pre=pre, lo=lo, slope=slope, gamma=gamma, tgain=tgain,
-                clar_ab=clar_ab, clarity=1.2 * s.contrast, stats=stats, tcol=tcol)
+                clar_ab=clar_ab, clarity=1.2 * s.contrast, stats=stats, tcol=tcol,
+                wtone=wtone, capw=capw)
 
 
 # ---------------------------------------------------------------------------
@@ -715,8 +856,10 @@ def _apply_strip(part: np.ndarray, plan: Plan, full_hw: Tuple[int, int],
                 + upsample_rows(plan.t_ab[1], full_hw, y0, y1), 0.0, 1.0)
     tc = (t if plan.tcol is None
           else np.clip(upsample_rows(plan.tcol, full_hw, y0, y1), 0.0, 1.0))
+    cw = (None if plan.capw is None
+          else np.clip(upsample_rows(plan.capw, full_hw, y0, y1), 0.0, 1.0))
     lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(tc, plan.keep)))
-    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tc)
+    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tc, plan.wtone, cw)
     enc = _post(encode_srgb(rec * plan.pre), plan.lo, plan.slope, plan.gamma,
                 plan.tgain, s.saturation, _clip_weight(enc0),
                 s.shadows, s.vibrance)
@@ -789,13 +932,14 @@ def refresh_maps(plan: Plan, img: np.ndarray,
         t_ab = (smooth * prev.t_ab[0] + (1 - smooth) * t_ab[0],
                 smooth * prev.t_ab[1] + (1 - smooth) * t_ab[1])
     t = np.clip(t_ab[0] * guide + t_ab[1], 0.0, 1.0)
-    tcol = color_t(t, guide)
+    tcol = color_t(t, guide, enc0 if plan.keep > 0 else None)
     if prev is not None and smooth > 0 and prev.tcol is not None \
             and prev.tcol.shape == tcol.shape:
         tcol = smooth * prev.tcol + (1 - smooth) * tcol
 
+    capw = red_cap_weight(enc0, guide)
     lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(tcol, plan.keep)))
-    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tcol)
+    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tcol, plan.wtone, capw)
     out = shoulder(_post(encode_srgb(rec * plan.pre), plan.lo, plan.slope,
                          plan.gamma, plan.tgain, s.saturation, _clip_weight(enc0),
                 s.shadows, s.vibrance))
@@ -807,7 +951,8 @@ def refresh_maps(plan: Plan, img: np.ndarray,
     return Plan(settings=s, comp=plan.comp, gains=plan.gains, water=plan.water,
                 keep=plan.keep, t_ab=t_ab, pre=plan.pre, lo=plan.lo, slope=plan.slope,
                 gamma=plan.gamma, tgain=plan.tgain, clar_ab=clar_ab,
-                clarity=plan.clarity, stats=plan.stats, tcol=tcol)
+                clarity=plan.clarity, stats=plan.stats, tcol=tcol, wtone=plan.wtone,
+                capw=capw)
 
 
 def merge_plans(plans) -> Plan:
@@ -824,4 +969,6 @@ def merge_plans(plans) -> Plan:
                 slope=float(np.median([p.slope for p in plans])),
                 gamma=float(np.median([p.gamma for p in plans])),
                 tgain=p0.tgain, clar_ab=p0.clar_ab, clarity=p0.clarity,
-                stats=p0.stats, tcol=p0.tcol)
+                stats=p0.stats, tcol=p0.tcol, capw=p0.capw,
+                wtone=(None if any(p.wtone is None for p in plans)
+                       else med("wtone").astype(np.float32)))
