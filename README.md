@@ -123,6 +123,10 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 
 ## Historique
 
+### 1.7.1
+
+- Le numéro de version est affiché dans l'en-tête de l'application et dans l'onglet du navigateur.
+
 ### 1.7.0
 
 Améliorations tirées de la sélection de 131 photos favorites (`PHOTOS\MER ROUGE OCT 2026\RAW`).

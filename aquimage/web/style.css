@@ -211,3 +211,4 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .run-head #run-open { flex: none; margin-bottom: 10px; }
 .run-head .run-eta { margin-left: auto; }
 #btn-reveal { justify-self: start; }
+.brand .ver { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }

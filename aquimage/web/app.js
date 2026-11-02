@@ -740,6 +740,8 @@ function setLang(code, save) {
 /* ================================================================ démarrage */
 (async function main() {
   INFO = await api("/api/info");
+  $("#ver").textContent = "v" + INFO.version;
+  document.title = `AquImage ${INFO.version}`;
   setLang(pickLang((INFO.config || {}).lang), false);
   const sel = $("#lang");
   for (const [code, name] of Object.entries(LANGS)) sel.add(new Option(name, code, false, code === LANG));
