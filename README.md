@@ -123,6 +123,15 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 
 ## Historique
 
+### 1.7.0
+
+Améliorations tirées de la sélection de 131 photos favorites (`PHOTOS\MER ROUGE OCT 2026\RAW`).
+
+- **Taches orange et rouge-violet :** là où l'original n'a quasiment plus de rouge (sable très bleu, eau), tout le rouge est reconstruit. Il est désormais plafonné à celui d'un sable beige. Les halos orange autour des raies (DSCI0909, 0915) et les nuages rouge-violet dans l'eau (DSCI2026, 1390) disparaissent.
+- **Eau voilée :** l'eau est reconnue comme les grandes zones lisses ayant sa couleur, même quand l'estimation de distance la croit proche. L'eau de DSCI2026 et DSCI1403 est enfin bleue et homogène.
+- **Poissons et bulles :** ils ne comptent plus comme des sujets, et ne font plus corriger l'eau autour d'eux.
+- **Pas de lavande ni de magenta dans les zones lisses** (eau, voile, sable) : DSCI1807, 1589. Les vrais sujets violets (coraux mous, éponges), texturés, sont préservés.
+
 ### 1.6.3
 
 Retour sur DSCI0898, 0900, 0940 et 0943 : l'eau tirait sur le cyan, et le sable clair restait cyan ou devenait mauve.
