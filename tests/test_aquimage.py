@@ -11,6 +11,7 @@ import time
 import json
 import urllib.request
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -521,3 +522,56 @@ def test_clipped_highlights_do_not_darken(img):
     sun[:12, :40] = 255                     # petit soleil écrêté
     out = core.apply_plan(sun, core.build_plan(sun, autotune.auto_settings(sun)[0]))
     assert np.median(out[40:]) > np.median(base[40:]) - 6
+
+
+# ---------------------------------------------------------------- v1.8 : édition
+def test_crop_box_square_and_even():
+    x0, y0, x1, y1 = video.crop_box(1368, 912, (0.3, 0.2, 0.3 + 547 / 1368, 0.2 + 547 / 912))
+    assert x1 - x0 == y1 - y0 and (x1 - x0) % 2 == 0
+    assert video.crop_box(640, 480, None) == (0, 0, 640, 480)
+
+
+def test_server_crop_saved(tmp_path, img):
+    from aquimage import server
+    Image.fromarray(img).save(tmp_path / "x.jpg")
+    sess = server.Session(str(tmp_path / "x.jpg"))
+    sess.set_edit({"crop": [0.25, 0.25, 0.75, 0.75]})
+    out = server.save_output(sess, sess.settings, str(tmp_path / "o"), "same", 92, "")
+    h, w = img.shape[:2]
+    with Image.open(out["out"]) as im:
+        assert abs(im.size[0] - w / 2) <= 2 and abs(im.size[1] - h / 2) <= 2
+    sess.set_rot(1)
+    assert sess.crop is None                 # la rotation annule le cadre
+
+
+@pytest.mark.skipif(not video.ffmpeg_exe(), reason="ffmpeg absent")
+def test_video_trim_crop_stabilize(tmp_path):
+    rng = np.random.default_rng(1)
+    bg = (cv2.resize(rng.random((40, 60, 3)).astype(np.float32), (520, 400),
+                     interpolation=cv2.INTER_CUBIC) * 220).astype(np.uint8)
+    src = str(tmp_path / "s.mp4")
+    wr = cv2.VideoWriter(src, cv2.VideoWriter_fourcc(*"mp4v"), 20, (480, 360))
+    for i in range(40):
+        x, y = 20 + int(rng.normal(0, 5)), 20 + int(rng.normal(0, 5))
+        wr.write(bg[y:y + 360, x:x + 480])
+    wr.release()
+
+    def jitter(p):
+        cap, prev, mv = cv2.VideoCapture(p), None, []
+        while True:
+            ok, f = cap.read()
+            if not ok:
+                break
+            g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            if prev is not None:
+                (sx, sy), _ = cv2.phaseCorrelate(prev, g)
+                mv.append(np.hypot(sx, sy))
+            prev = g
+        return float(np.mean(mv))
+
+    dst = str(tmp_path / "o.mp4")
+    info = video.process_video(src, dst, Settings(), stabilize=0.6,
+                               trim=(0.25, 0.75), crop=(0.1, 0.1, 0.9, 0.9))
+    assert 19 <= info["frames"] <= 22
+    assert info["width"] % 2 == 0 and abs(info["width"] - 384) <= 2
+    assert jitter(dst) < 0.3 * jitter(src)

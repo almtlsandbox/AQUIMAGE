@@ -112,7 +112,7 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .mini > div { height: 100%; background: var(--buoy); }
 
 /* ---------- ATELIER ---------- */
-.atelier { display: grid; grid-template-columns: 210px 1fr 320px; min-height: 0; height: 100%; }
+.atelier { display: grid; grid-template-columns: 210px minmax(0, 1fr) 320px; min-height: 0; height: 100%; }
 .strip { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .strip-head { padding: 12px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); }
 .strip-dir { margin: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -122,7 +122,7 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .thumbs img { width: 100%; aspect-ratio: 3/2; object-fit: cover; display: block; border-radius: var(--radius-s); background: var(--raise); }
 .thumbs .vid { position: absolute; left: 6px; bottom: 6px; background: rgba(0,0,0,.65); font-size: 11px; padding: 1px 6px; border-radius: 3px; }
 
-.viewer-col { display: grid; grid-template-rows: 1fr auto; min-height: 0; min-width: 0; }
+.viewer-col { display: grid; grid-template-rows: 1fr auto; grid-template-columns: minmax(0, 1fr); overflow: hidden; min-height: 0; min-width: 0; }
 .viewer { position: relative; overflow: hidden; background: var(--canvas); cursor: grab; user-select: none; }
 .viewer.panning { cursor: grabbing; }
 .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
@@ -144,7 +144,7 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .viewer-foot > * { white-space: nowrap; }
 .viewer-foot .rot { display: inline-flex; gap: 4px; }
 .btn.icon { min-width: 30px; padding: 2px 8px; font-size: 16px; line-height: 1.2; }
-.viewer-foot .keys { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.viewer-foot .keys { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
 .vpos { display: flex; align-items: center; gap: 8px; }
 .vpos input { width: 200px; }
 
@@ -211,4 +211,28 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .run-head #run-open { flex: none; margin-bottom: 10px; }
 .run-head .run-eta { margin-left: auto; }
 #btn-reveal { justify-self: start; }
+/* Édition */
+.edit-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.edit-row select { width: auto; padding: 4px 6px; font-size: 12.5px; }
+.edit #crop-btn[aria-pressed="true"] { background: var(--buoy); border-color: var(--buoy); color: var(--buoy-ink); }
+.check-row { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 8px 0 4px; cursor: pointer; }
+.crop { position: absolute; box-shadow: 0 0 0 9999px rgba(0,0,0,.55); outline: 1px solid rgba(255,255,255,.85); pointer-events: none; z-index: 3; }
+.crop.active { pointer-events: auto; cursor: move; outline: 1px dashed #fff;
+  background-image: linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)), linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),
+    linear-gradient(90deg,rgba(255,255,255,.35),rgba(255,255,255,.35)), linear-gradient(90deg,rgba(255,255,255,.35),rgba(255,255,255,.35));
+  background-size: 100% 1px, 100% 1px, 1px 100%, 1px 100%; background-repeat: no-repeat;
+  background-position: 0 33.33%, 0 66.66%, 33.33% 0, 66.66% 0; }
+.crop .h { display: none; position: absolute; width: 12px; height: 12px; background: #fff; border: 1px solid #333; border-radius: 2px; }
+.crop.active .h { display: block; }
+.crop.ratio .h[data-h="n"], .crop.ratio .h[data-h="s"], .crop.ratio .h[data-h="e"], .crop.ratio .h[data-h="w"] { display: none; }
+.crop .h[data-h="nw"] { left: -6px; top: -6px; cursor: nwse-resize; }
+.crop .h[data-h="ne"] { right: -6px; top: -6px; cursor: nesw-resize; }
+.crop .h[data-h="se"] { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.crop .h[data-h="sw"] { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.crop .h[data-h="n"] { left: calc(50% - 6px); top: -6px; cursor: ns-resize; }
+.crop .h[data-h="s"] { left: calc(50% - 6px); bottom: -6px; cursor: ns-resize; }
+.crop .h[data-h="e"] { right: -6px; top: calc(50% - 6px); cursor: ew-resize; }
+.crop .h[data-h="w"] { left: -6px; top: calc(50% - 6px); cursor: ew-resize; }
+.viewer.cropping { cursor: crosshair; }
+.viewer.cropping .split, .viewer.cropping .tag { display: none; }
 .brand .ver { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }

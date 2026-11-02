@@ -46,6 +46,9 @@ class Session:
         self.kind = "video" if fileio.is_video(path) else "image"
         self.pos = 0.5
         self.rot = 0                     # quarts de tour, sens horaire
+        self.crop = None                 # [x0, y0, x1, y1] fractions de l'image pivotée
+        self.trim = [0.0, 1.0]           # vidéo : début, fin (fractions de la durée)
+        self.stab = 0.0                  # vidéo : force de stabilisation (0 = aucune)
         self.meta = None
         self.full: Optional[np.ndarray] = None
         if self.kind == "image":
@@ -73,8 +76,29 @@ class Session:
         self.before_jpeg = fileio.jpeg_bytes(self.preview, 90)
 
     def set_rot(self, rot: int) -> None:
-        self.rot = int(rot) % 4
+        rot = int(rot) % 4
+        if rot != self.rot:
+            self.crop = None             # le cadre ne correspond plus
+        self.rot = rot
         self._apply_rot()
+
+    def set_edit(self, b: dict) -> None:
+        if "crop" in b:
+            c = b["crop"]
+            if not c:
+                self.crop = None
+            else:
+                x0, y0, x1, y1 = [min(max(float(v), 0.0), 1.0) for v in c]
+                x0, x1 = sorted((x0, x1))
+                y0, y1 = sorted((y0, y1))
+                full = x0 <= 1e-3 and y0 <= 1e-3 and x1 >= 0.999 and y1 >= 0.999
+                self.crop = None if full or x1 - x0 < 0.02 or y1 - y0 < 0.02 \
+                    else [x0, y0, x1, y1]
+        if "trim" in b and self.kind == "video":
+            a, z = [min(max(float(v), 0.0), 1.0) for v in b["trim"]]
+            self.trim = [min(a, z), max(a, z)] if abs(z - a) > 1e-3 else [0.0, 1.0]
+        if "stab" in b and self.kind == "video":
+            self.stab = min(max(float(b["stab"] or 0.0), 0.0), 1.0)
 
     def full_rotated(self) -> np.ndarray:
         return core.rotate90(self.full, self.rot)
@@ -93,6 +117,7 @@ class Session:
     def describe(self) -> dict:
         return {"id": self.id, "path": self.path, "name": os.path.basename(self.path),
                 "kind": self.kind, "info": self.info, "pos": self.pos, "rot": self.rot,
+                "crop": self.crop, "trim": self.trim, "stab": self.stab,
                 "settings": self.settings.to_dict(), "diag": self.diag}
 
 
@@ -283,8 +308,9 @@ def start_task(fn, *args) -> str:
 
 
 def _export_video(task, sess: Session, settings: Settings, dst: str,
-                  rot: int) -> str:
-    video.process_video(sess.path, dst, settings, rotate=rot,
+                  rot: int, crop, trim, stab: float) -> str:
+    video.process_video(sess.path, dst, settings, rotate=rot, crop=crop,
+                        trim=trim, stabilize=stab,
                         progress=lambda f: task.__setitem__("progress", f),
                         cancel=task["cancel"],
                         workers=max(2, min(4, (os.cpu_count() or 2) // 2)))
@@ -297,7 +323,8 @@ def save_output(sess: Session, settings: Settings, dest_dir: str, fmt: str,
     stem, ext = os.path.splitext(os.path.basename(sess.path))
     if sess.kind == "video":
         dst = os.path.join(dest_dir, stem + suffix + ".mp4")
-        tid = start_task(_export_video, sess, settings, dst, sess.rot)
+        tid = start_task(_export_video, sess, settings, dst, sess.rot,
+                         sess.crop, list(sess.trim), sess.stab)
         return {"task": tid, "out": dst}
     if fmt in ("jpg", "png", "tif"):
         ext = "." + fmt
@@ -308,6 +335,9 @@ def save_output(sess: Session, settings: Settings, dest_dir: str, fmt: str,
     img = sess.full_rotated()
     plan = core.build_plan(img, settings)
     out = core.apply_plan(img, plan)
+    if sess.crop:
+        x0, y0, x1, y1 = video.crop_box(out.shape[1], out.shape[0], sess.crop)
+        out = np.ascontiguousarray(out[y0:y1, x0:x1])
     fileio.save_image(dst, out, sess.meta, quality)
     return {"out": dst}
 
@@ -417,6 +447,11 @@ class Handler(BaseHTTPRequestHandler):
                 sess = APP.get(b["id"])
                 with sess.lock:
                     sess.set_rot(int(b.get("rot", 0)))
+                return self._json(sess.describe())
+            if u.path == "/api/edit":
+                sess = APP.get(b["id"])
+                with sess.lock:
+                    sess.set_edit(b)
                 return self._json(sess.describe())
             if u.path == "/api/frame":
                 sess = APP.get(b["id"])

@@ -379,6 +379,7 @@ const Viewer = {
     let drag = null;
     el.addEventListener("pointerdown", e => {
       if (!this.w) return;
+      if (Crop.mode && e.button === 0) { e.preventDefault(); Crop.down(e); return; }
       el.setPointerCapture(e.pointerId);
       const r = el.getBoundingClientRect();
       const onSplit = e.target.closest("#split");
@@ -386,6 +387,7 @@ const Viewer = {
       if (!onSplit) el.classList.add("panning");
     });
     el.addEventListener("pointermove", e => {
+      if (Crop.drag) { Crop.move(e); return; }
       if (!drag) return;
       if (drag.split) {
         this.split = Math.min(1, Math.max(0, (e.clientX - drag.r.left) / drag.r.width));
@@ -394,14 +396,18 @@ const Viewer = {
       }
       this.apply();
     });
-    const end = () => { drag = null; el.classList.remove("panning"); };
+    const end = () => { if (Crop.drag) Crop.up(); drag = null; el.classList.remove("panning"); };
     el.addEventListener("pointerup", end);
     el.addEventListener("pointercancel", end);
-    el.addEventListener("dblclick", () => this.fit());
+    el.addEventListener("dblclick", () => { if (!Crop.mode) this.fit(); });
     window.addEventListener("resize", () => { if (this.fitted) this.fit(); else this.apply(); });
     document.addEventListener("keydown", e => {
       if (e.code === "Space" && !$("#view-atelier").hidden && !e.target.matches("input,select,textarea,button")) {
         e.preventDefault(); this.showBefore = true; this.apply();
+      }
+      if (!$("#view-atelier").hidden && Atelier.sess && !e.target.matches("input,select,textarea")) {
+        if ((e.key === "c" || e.key === "C") && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); Crop.setMode(!Crop.mode); }
+        if (Crop.mode && (e.key === "Enter" || e.key === "Escape")) { e.preventDefault(); Crop.setMode(false); }
       }
       if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey
           && !$("#view-atelier").hidden && !e.target.matches("input,select,textarea")) {
@@ -443,8 +449,112 @@ const Viewer = {
     const ss = Atelier.sess;
     const full = ss && ss.info.width ? (ss.rot % 2 ? ss.info.height : ss.info.width) : this.w;
     $("#zoom-v").textContent = this.fitted ? T("zoom.fit") : T("zoom", { n: Math.round(this.s * this.w / full * 100) });
+    Crop.draw();
   },
 };
+
+/* ================================================================ RECADRAGE */
+const clamp01 = v => Math.min(1, Math.max(0, v));
+const Crop = {
+  el: $("#crop"), mode: false, drag: null,
+  /* Rapport largeur/hauteur voulu (en pixels), ou null pour libre */
+  ratio() {
+    const v = $("#crop-ratio").value;
+    if (v === "free" || !Viewer.w) return null;
+    return v === "orig" ? Viewer.w / Viewer.h : Number(v);
+  },
+  frac(e) {
+    const r = Viewer.el.getBoundingClientRect();
+    return [(e.clientX - r.left - Viewer.tx) / (Viewer.s * Viewer.w),
+            (e.clientY - r.top - Viewer.ty) / (Viewer.s * Viewer.h)];
+  },
+  down(e) {
+    const [fx, fy] = this.frac(e);
+    const c = Atelier.crop, h = e.target.closest(".h");
+    if (h && c) this.drag = { type: h.dataset.h, c0: [...c] };
+    else if (c && e.target.closest("#crop")) this.drag = { type: "move", c0: [...c], p0: [fx, fy] };
+    else this.drag = { type: "new", p0: [clamp01(fx), clamp01(fy)] };
+    Viewer.el.setPointerCapture(e.pointerId);
+  },
+  move(e) {
+    let [fx, fy] = this.frac(e);
+    fx = clamp01(fx); fy = clamp01(fy);
+    const d = this.drag, R = this.ratio(), rf = R ? R * Viewer.h / Viewer.w : null;
+    let c;
+    if (d.type === "move") {
+      const [a, b, x1, y1] = d.c0, w = x1 - a, h = y1 - b;
+      const x0 = Math.min(Math.max(a + fx - d.p0[0], 0), 1 - w);
+      const y0 = Math.min(Math.max(b + fy - d.p0[1], 0), 1 - h);
+      c = [x0, y0, x0 + w, y0 + h];
+    } else if ("nsew".includes(d.type)) {
+      c = [...d.c0];
+      if (d.type === "n") c[1] = Math.min(fy, c[3] - 0.02);
+      if (d.type === "s") c[3] = Math.max(fy, c[1] + 0.02);
+      if (d.type === "w") c[0] = Math.min(fx, c[2] - 0.02);
+      if (d.type === "e") c[2] = Math.max(fx, c[0] + 0.02);
+    } else {
+      let ax, ay;
+      if (d.type === "new") [ax, ay] = d.p0;
+      else { ax = d.type.includes("w") ? d.c0[2] : d.c0[0]; ay = d.type.includes("n") ? d.c0[3] : d.c0[1]; }
+      let w = Math.abs(fx - ax), h = Math.abs(fy - ay);
+      if (rf) {
+        if (w / Math.max(h, 1e-6) > rf) w = h * rf; else h = w / rf;
+        const mw = fx < ax ? ax : 1 - ax, mh = fy < ay ? ay : 1 - ay;
+        if (w > mw) { w = mw; h = w / rf; }
+        if (h > mh) { h = mh; w = h * rf; }
+      }
+      const x0 = fx < ax ? ax - w : ax, y0 = fy < ay ? ay - h : ay;
+      c = [x0, y0, x0 + w, y0 + h];
+    }
+    Atelier.crop = c;
+    Viewer.apply(); Atelier.cropInfo();
+  },
+  up() {
+    const c = Atelier.crop;
+    this.drag = null;
+    if (c && (c[2] - c[0] < 0.02 || c[3] - c[1] < 0.02)) Atelier.crop = null;
+    Atelier.sendEdit({ crop: Atelier.crop });
+    Viewer.apply();
+  },
+  setMode(on) {
+    this.mode = !!on && !!Atelier.sess;
+    const b = $("#crop-btn");
+    b.setAttribute("aria-pressed", String(this.mode));
+    b.dataset.i18n = this.mode ? "e.crop_done" : "e.crop";
+    b.textContent = T(b.dataset.i18n);
+    Viewer.el.classList.toggle("cropping", this.mode);
+    if (this.mode) Viewer.fit();
+    Viewer.apply(); Atelier.cropInfo();
+  },
+  applyRatio() {
+    const R = this.ratio();
+    if (!R) { this.draw(); return; }
+    const rf = R * Viewer.h / Viewer.w;
+    const c = Atelier.crop || [0, 0, 1, 1];
+    const cx = (c[0] + c[2]) / 2, cy = (c[1] + c[3]) / 2;
+    let w = c[2] - c[0], h = c[3] - c[1];
+    if (w / h > rf) w = h * rf; else h = w / rf;
+    const x0 = Math.min(Math.max(cx - w / 2, 0), 1 - w), y0 = Math.min(Math.max(cy - h / 2, 0), 1 - h);
+    Atelier.crop = [x0, y0, x0 + w, y0 + h];
+    Atelier.sendEdit({ crop: Atelier.crop });
+    Viewer.apply(); Atelier.cropInfo();
+  },
+  draw() {
+    const c = Atelier.crop, el = this.el;
+    const show = !!Viewer.w && !!Atelier.sess && (!!c || this.mode);
+    el.hidden = !show;
+    if (!show) return;
+    const k = c || [0, 0, 1, 1], S = Viewer.s;
+    el.style.left = (Viewer.tx + k[0] * Viewer.w * S) + "px";
+    el.style.top = (Viewer.ty + k[1] * Viewer.h * S) + "px";
+    el.style.width = ((k[2] - k[0]) * Viewer.w * S) + "px";
+    el.style.height = ((k[3] - k[1]) * Viewer.h * S) + "px";
+    el.style.boxShadow = c ? "" : "none";
+    el.classList.toggle("active", this.mode);
+    el.classList.toggle("ratio", !!this.ratio());
+  },
+};
+const mmss = sec => { sec = Math.max(0, Math.round(sec)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`; };
 
 /* ================================================================== ATELIER */
 const Atelier = {
@@ -485,6 +595,33 @@ const Atelier = {
     });
     $("#vpos").addEventListener("change", e => this.frame(Number(e.target.value)));
     $("#rot-l").addEventListener("click", () => this.rotate(-1));
+    $("#crop-btn").addEventListener("click", () => Crop.setMode(!Crop.mode));
+    $("#crop-ratio").addEventListener("change", () => Crop.applyRatio());
+    $("#crop-reset").addEventListener("click", () => { this.crop = null; this.sendEdit({ crop: null }); Viewer.apply(); this.cropInfo(); });
+    const trimIn = which => {
+      let a = Number($("#trim-a").value), b = Number($("#trim-b").value);
+      if (b - a < 0.01) { if (which === "a") a = Math.max(0, b - 0.01); else b = Math.min(1, a + 0.01); }
+      $("#trim-a").value = a; $("#trim-b").value = b;
+      this.trimInfo();
+      return which === "a" ? a : b;
+    };
+    $("#trim-a").addEventListener("input", () => trimIn("a"));
+    $("#trim-b").addEventListener("input", () => trimIn("b"));
+    for (const id of ["trim-a", "trim-b"]) {
+      $("#" + id).addEventListener("change", () => {
+        const pos = trimIn(id === "trim-a" ? "a" : "b");
+        this.sendEdit({ trim: [Number($("#trim-a").value), Number($("#trim-b").value)] });
+        $("#vpos").value = pos; this.frame(pos);
+      });
+    }
+    const stabSend = () => {
+      $("#stab-k-wrap").hidden = !$("#stab").checked;
+      $("#stab-k-v").textContent = fmtNum($("#stab-k").value, 2);
+      this.sendEdit({ stab: $("#stab").checked ? Number($("#stab-k").value) : 0 });
+    };
+    $("#stab").addEventListener("change", stabSend);
+    $("#stab-k").addEventListener("input", () => { $("#stab-k-v").textContent = fmtNum($("#stab-k").value, 2); });
+    $("#stab-k").addEventListener("change", stabSend);
     $("#rot-r").addEventListener("click", () => this.rotate(1));
     $("#sf-kind").value = FILTERS.strip.kind;
     $("#sf-hide").checked = !!FILTERS.strip.hideDone;
@@ -603,6 +740,20 @@ const Atelier = {
     this.showDiag();
     $("#btn-auto").disabled = false; $("#btn-save").disabled = false; $("#btn-tolot").disabled = false;
     $("#rot-l").disabled = false; $("#rot-r").disabled = false;
+    for (const id of ["#crop-btn", "#crop-ratio", "#crop-reset"]) $(id).disabled = false;
+    this.crop = d.crop || null;
+    if (fresh) Crop.setMode(false);
+    this.cropInfo();
+    $("#vid-edit").hidden = d.kind !== "video";
+    if (d.kind === "video") {
+      const tr = d.trim || [0, 1];
+      $("#trim-a").value = tr[0]; $("#trim-b").value = tr[1];
+      $("#stab").checked = (d.stab || 0) > 0;
+      if (d.stab) $("#stab-k").value = d.stab;
+      $("#stab-k-wrap").hidden = !$("#stab").checked;
+      $("#stab-k-v").textContent = fmtNum($("#stab-k").value, 2);
+      this.trimInfo();
+    }
     $("#btn-save").dataset.i18n = d.kind === "video" ? "a.save_video" : "a.save";
     $("#btn-save").textContent = T($("#btn-save").dataset.i18n);
     $("#vpos-wrap").hidden = d.kind !== "video";
@@ -624,6 +775,34 @@ const Atelier = {
     if (d.rot) txt += " " + T("p.rotated", { deg: d.rot * 90 }) + ".";
     $("#p-diag").textContent = txt;
   },
+  async sendEdit(body) {
+    if (!this.sess) return;
+    try {
+      const d = await api("/api/edit", { id: this.sess.id, ...body });
+      this.sess.crop = d.crop; this.sess.trim = d.trim; this.sess.stab = d.stab;
+      if (!Crop.drag) this.crop = d.crop;
+    } catch (e) { $("#save-msg").textContent = e.message; }
+    this.cropInfo(); this.trimInfo();
+  },
+  fullSize() {
+    const d = this.sess;
+    return d.rot % 2 ? [d.info.height, d.info.width] : [d.info.width, d.info.height];
+  },
+  cropInfo() {
+    const el = $("#crop-info");
+    if (!this.sess) { el.textContent = ""; return; }
+    const [W, H] = this.fullSize(), c = this.crop;
+    if (c) el.textContent = T("e.crop_info", { w: Math.round((c[2] - c[0]) * W), h: Math.round((c[3] - c[1]) * H) });
+    else el.textContent = Crop.mode ? T("e.crop_hint") : "";
+  },
+  trimInfo() {
+    const d = this.sess;
+    if (!d || d.kind !== "video") return;
+    const D = d.info.duration || 0, a = Number($("#trim-a").value), b = Number($("#trim-b").value);
+    $("#trim-a-v").textContent = mmss(a * D);
+    $("#trim-b-v").textContent = mmss(b * D);
+    $("#trim-info").textContent = (a > 0 || b < 1) ? T("e.trim_info", { d: mmss((b - a) * D), t: mmss(D) }) : "";
+  },
   async rotate(dir) {
     if (!this.sess) return;
     const rot = ((this.sess.rot || 0) + dir + 4) % 4;
@@ -631,6 +810,7 @@ const Atelier = {
     try {
       const d = await api("/api/rotate", { id: this.sess.id, rot });
       this.sess.rot = d.rot;
+      this.sess.crop = d.crop; this.crop = d.crop; this.cropInfo();
       this.showDiag();
       this.loadBefore(true);
       this.render();
@@ -732,6 +912,7 @@ function setLang(code, save) {
   if ($("#src").value) Lot.count();
   Lot.modeHint();
   Atelier.showDiag();
+  Atelier.cropInfo(); Atelier.trimInfo();
   Atelier.applyFilter();
   Atelier.files.forEach(f => Atelier.markDone(f));
   Viewer.apply();

@@ -40,6 +40,9 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - Faites glisser le séparateur orange pour comparer l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
 - La molette zoome et le glisser déplace l'image. Un double-clic ajuste l'image à la fenêtre.
 - **Filtres de la colonne :** le menu choisit le type (photos et vidéos, photos seules, vidéos seules). La case « Masquer les déjà enregistrées » cache les fichiers qui ont déjà une version dans le dossier « Enregistrer dans » ; ceux-là portent une coche ✓. Les nombres indiqués ne dépendent pas de l'autre filtre. Les flèches du clavier ne parcourent que les fichiers affichés, et les choix sont mémorisés.
+- **Recadrage :** le bouton « Recadrer » ou la touche **C** affiche un cadre. On le trace sur l'image, on le déplace, on l'ajuste par ses poignées. Une grille des tiers aide à composer. Le format peut être libre, celui de l'original, 3:2, 4:3, 16:9, 1:1 ou 4:5. Entrée termine. Le recadrage est appliqué à l'enregistrement et à l'export vidéo ; « Sans recadrage » l'annule. Une rotation l'annule aussi, car le cadre ne correspond plus.
+- **Vidéo, découpe :** les curseurs « Début » et « Fin » choisissent la partie exportée, et le son est découpé de même. En les déplaçant, on affiche l'image correspondante.
+- **Vidéo, stabilisation :** cochez « Stabiliser la vidéo » et réglez la force, qui lisse le mouvement sur 0,5 à 2 secondes. Le mouvement est analysé à l'export, puis compensé. L'image est légèrement agrandie pour masquer les bords : 15 % au maximum.
 - **Rotation :** les boutons ↺ ↻ sous l'image, ou les touches **R** (sens horaire) et **Maj+R** (sens inverse), tournent la photo ou la vidéo par quarts de tour. La rotation est appliquée au fichier enregistré ou à la vidéo exportée. Elle repart de zéro à chaque nouvelle photo et ne s'applique pas au lot.
 - Les curseurs partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
 - **L'aperçu est fidèle à l'export :** les réglages ne dépendent pas de la résolution. L'écart mesuré entre l'aperçu et l'export pleine résolution est de 0,85 niveau sur 255.
@@ -122,6 +125,13 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 **Limite connue :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
 
 ## Historique
+
+### 1.8.0
+
+- **Édition dans l'atelier :** recadrage par cadre, pour les photos et les vidéos, avec choix du format.
+- **Découpe vidéo :** début et fin de l'extrait exporté.
+- **Stabilisation vidéo :** sur une vidéo test secouée, le mouvement parasite passe de 10,5 pixels à 0,06 pixel par image, avec 6 % de recadrage.
+- **Ordre des opérations à l'export vidéo :** découpe, rotation, stabilisation, recadrage, puis correction des couleurs. Les réglages automatiques sont estimés sur la partie gardée.
 
 ### 1.7.1
 
