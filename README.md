@@ -2,21 +2,54 @@
 
 Correction automatique des photos et vidéos de plongée, pour usage personnel. Sans licence et sans connexion : tout tourne sur votre ordinateur.
 
-![Original, AquaCol 1.0 et AquImage sur 8 photos de plongée](docs/avant-apres.jpg)
+![Huit photos de la mer Rouge : original et AquImage 1.9](docs/avant-apres.jpg)
 
-## Démarrer
+**Ce que fait AquImage**
+- **Correction automatique :** il rend le rouge absorbé par l'eau, retire le voile, garde l'eau lointaine bleue, et préserve les hautes lumières et les fonds noirs.
+- **Lot :** toute une plongée est corrigée d'un coup, avec des réglages estimés pour chaque photo et chaque vidéo.
+- **Atelier :** comparaison avant / après et réglages fins sur une photo ou une vidéo.
+- **Édition :** rotation, recadrage, découpe et stabilisation des vidéos.
+- **Interface :** en français, anglais, espagnol et allemand.
+
+**Sommaire :**
+[Installer et mettre à jour](#installer-et-mettre-à-jour) ·
+[Lot](#lot--toute-une-plongée-dun-coup) ·
+[Atelier](#atelier--une-photo-à-la-fois) ·
+[Édition](#édition) ·
+[Vidéos](#vidéos) ·
+[Raccourcis](#raccourcis-clavier) ·
+[Formats](#formats) ·
+[Ligne de commande](#ligne-de-commande) ·
+[Comment ça marche](#comment-ça-marche) ·
+[Historique](#historique)
+
+## Installer et mettre à jour
 
 Double-cliquez sur **`AquImage.bat`**.
 
-- Au premier lancement, le fichier crée un environnement Python dans `%LOCALAPPDATA%\AquImage\venv`, hors de OneDrive pour ne pas synchroniser des milliers de fichiers, puis installe les dépendances. Comptez quelques minutes.
+- Au premier lancement, le fichier crée un environnement Python dans `%LOCALAPPDATA%\AquImage\venv` et installe les dépendances. Ce dossier est volontairement hors de OneDrive, pour ne pas synchroniser des milliers de fichiers. Comptez quelques minutes.
 - L'interface s'ouvre ensuite dans votre navigateur, à l'adresse `http://127.0.0.1:8765`. Elle ne fonctionne que sur cet ordinateur.
+- La version s'affiche à côté du nom, en haut à gauche.
 - Fermez la fenêtre noire pour quitter.
 
 Python 3.9 ou plus récent est nécessaire. Le lanceur trouve `C:\Python\Python39`, sinon `py` ou `python`.
 
-**Langue :** l'interface existe en français, anglais, espagnol et allemand. Choisissez-la en haut à droite ; le choix est mémorisé.
+**Mettre à jour :** fermez AquImage, puis, dans le dossier du programme :
 
-Pour corriger un dossier sans ouvrir l'interface, glissez-le sur **`Corriger un dossier.bat`**. Les fichiers corrigés vont dans un sous-dossier `AquImage` de ce dossier.
+```bat
+git pull
+AquImage.bat
+```
+
+Rechargez ensuite la page du navigateur avec Ctrl+F5.
+
+Si `git pull` signale des modifications locales, en général de simples fins de ligne, écrasez-les avec `git reset --hard origin/main`. Vos photos ne sont pas concernées.
+
+Si `git pull` dit que la branche n'est reliée à rien, reliez-la une fois pour toutes avec `git branch --set-upstream-to=origin/main main`.
+
+**Langue :** choisissez-la en haut à droite ; le choix est mémorisé. Le rapport CSV et la ligne de commande restent en français.
+
+**Sans interface :** glissez un dossier sur **`Corriger un dossier.bat`**. Les fichiers corrigés vont dans un sous-dossier `AquImage` de ce dossier.
 
 ## Lot : toute une plongée d'un coup
 
@@ -26,28 +59,23 @@ Pour corriger un dossier sans ouvrir l'interface, glissez-le sur **`Corriger un 
 Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'après sa dominante de couleur, son voile, son bruit et la couleur de l'eau. Les originaux ne sont jamais modifiés.
 
 - **Sous-dossiers :** ils sont recréés à l'identique dans la destination.
-- **Fichiers déjà corrigés :** ils sont ignorés, ce qui permet de relancer un lot interrompu. Cochez « Refaire » pour les recalculer.
+- **Reprise :** les fichiers déjà corrigés sont ignorés, ce qui permet de relancer un lot interrompu. Cochez « Refaire » pour les recalculer.
+- **Doublons :** les copies identiques (« X 2.JPG », « X 2.MOV ») sont ignorées et notées dans le rapport.
 - **Ajustements communs :** ils s'ajoutent aux réglages automatiques de chaque fichier, par exemple un peu plus chaud pour toute une plongée.
-- **Réglages identiques pour tous :** cette option reprend les réglages faits dans l'atelier sur une photo.
-- **Rapport :** `aquimage_rapport.csv` est écrit dans la destination. Il contient, pour chaque fichier, le type d'image détecté, les réglages retenus, la durée et les erreurs éventuelles. Il s'ouvre dans Excel.
-- **Ouvrir le dossier de sortie :** ce bouton, à droite de la barre de progression, ouvre la destination dans l'Explorateur Windows.
-- **Filtres :** pendant et après le lot, la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos). Chaque bouton indique le nombre total de fichiers de sa catégorie.
+- **Réglages identiques pour tous :** cette option reprend les réglages faits dans l'atelier sur une photo. Le recadrage et la rotation, eux, restent propres à chaque photo.
+- **Rapport :** `aquimage_rapport.csv`, écrit au fil du traitement, contient pour chaque fichier le type d'image détecté, les réglages, la durée et les erreurs. Il s'ouvre dans Excel.
+- **Filtres :** la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos).
+- **Ouvrir le dossier de sortie :** ce bouton ouvre la destination dans l'Explorateur Windows.
 - **Dossiers de sortie :** un dossier nommé `AquImage`, ou contenant un rapport, n'est jamais retraité.
 
 ## Atelier : une photo à la fois
 
-- La colonne de gauche montre les photos et vidéos du dossier. Les flèches du clavier passent à la suivante.
-- Faites glisser le séparateur orange pour comparer l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
-- La molette zoome et le glisser déplace l'image. Un double-clic ajuste l'image à la fenêtre.
-- **Filtres de la colonne :** le menu choisit le type (photos et vidéos, photos seules, vidéos seules). La case « Masquer les déjà enregistrées » cache les fichiers qui ont déjà une version dans le dossier « Enregistrer dans » ; ceux-là portent une coche ✓. Les nombres indiqués ne dépendent pas de l'autre filtre. Les flèches du clavier ne parcourent que les fichiers affichés, et les choix sont mémorisés.
-- **Recadrage :** le bouton « Recadrer » ou la touche **C** affiche un cadre. On le trace sur l'image, on le déplace, on l'ajuste par ses poignées. Une grille des tiers aide à composer. Le format peut être libre, celui de l'original, 3:2, 4:3, 16:9, 1:1 ou 4:5. Entrée termine. Le recadrage est appliqué à l'enregistrement et à l'export vidéo ; « Sans recadrage » l'annule. Une rotation l'annule aussi, car le cadre ne correspond plus.
-- **Vidéo, découpe :** les curseurs « Début » et « Fin » choisissent la partie exportée, et le son est découpé de même. En les déplaçant, on affiche l'image correspondante.
-- **Vidéo, stabilisation :** cochez « Stabiliser la vidéo » et réglez la force, qui lisse le mouvement sur 0,5 à 2 secondes. Le mouvement est analysé à l'export, puis compensé. L'image est légèrement agrandie pour masquer les bords : 15 % au maximum.
-- **Rotation :** les boutons ↺ ↻ sous l'image, ou les touches **R** (sens horaire) et **Maj+R** (sens inverse), tournent la photo ou la vidéo par quarts de tour. La rotation est appliquée au fichier enregistré ou à la vidéo exportée. Elle repart de zéro à chaque nouvelle photo et ne s'applique pas au lot.
-- Les curseurs partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
-- **L'aperçu est fidèle à l'export :** les réglages ne dépendent pas de la résolution. L'écart mesuré entre l'aperçu et l'export pleine résolution est de 0,85 niveau sur 255.
-- **Enregistrer** produit le fichier en pleine résolution. Pour une vidéo, **Exporter la vidéo** traite le clip entier.
-- **Ouvrir le dossier**, sous le message d'enregistrement, ouvre l'Explorateur avec le fichier corrigé sélectionné.
+- **Colonne de gauche :** les photos et vidéos du dossier. Le menu filtre par type. « Masquer les déjà enregistrées » cache celles qui ont déjà une version dans le dossier « Enregistrer dans » ; ces dernières portent une coche ✓.
+- **Comparaison :** faites glisser le séparateur orange entre l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
+- **Navigation :** la molette zoome, le glisser déplace l'image, le double-clic l'ajuste à la fenêtre.
+- **Curseurs :** ils partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
+- **Aperçu fidèle :** les réglages ne dépendent pas de la résolution ; l'aperçu et l'export pleine résolution diffèrent d'environ 1 niveau sur 255.
+- **Enregistrer** produit le fichier en pleine résolution ; **Exporter la vidéo** traite le clip entier. **Ouvrir le dossier** affiche ensuite le fichier dans l'Explorateur.
 
 | Curseur | Effet |
 | --- | --- |
@@ -57,16 +85,53 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 | Température, Teinte | Réglages créatifs, du froid au chaud et du vert au magenta |
 | Retrait du voile | Enlève la brume de l'eau et rend du contraste aux sujets lointains |
 | Protection contre le bruit au loin | Limite l'amplification du bruit dans les zones très voilées |
-| Éclaircir les ombres | Débouche les sujets sombres (utile en contre-jour) |
+| Luminosité | Plus clair ou plus sombre (tons moyens) |
+| Éclaircir les ombres | Débouche les sujets sombres, utile en contre-jour |
 | Contraste local | Clarté des détails, appliquée aux tons moyens seulement |
 | Vibrance | Ravive les couleurs ternes sans pousser celles déjà vives |
-| Luminosité, Saturation | Réglages de tonalité |
+| Saturation | Intensité de toutes les couleurs |
+
+## Édition
+
+Les outils de la section **Édition**, en haut du panneau de droite :
+
+- **Rotation par quarts de tour :** boutons ↺ ↻ sous l'image, ou touches **R** et **Maj+R**. Le fichier enregistré est réellement tourné, avec une orientation EXIF neutre.
+- **Recadrage :** bouton **Recadrer** ou touche **C**.
+  - Tracez un cadre sur l'image, déplacez-le, ou ajustez-le par ses poignées. Une grille des tiers aide à composer.
+  - Formats : libre, celui de l'original, 3:2, 4:3, 16:9, 1:1 ou 4:5.
+  - **Entrée** termine, et le panneau indique la taille finale en pixels.
+  - « Sans recadrage » annule le cadre. Une rotation l'annule aussi.
+- **Vidéo, découpe :** les curseurs **Début** et **Fin** choisissent l'extrait exporté, son compris. En les déplaçant, on affiche l'image correspondante.
+- **Vidéo, stabilisation :** cochez **Stabiliser la vidéo** et réglez la force.
+  - Le tremblé est analysé à l'export, puis compensé.
+  - L'image est légèrement agrandie pour masquer les bords (15 % au maximum).
+  - L'aperçu ne montre pas la stabilisation.
+
+Rotation, recadrage, découpe et stabilisation sont mémorisés pour la photo ou la vidéo ouverte. Ils sont appliqués à l'enregistrement ; les originaux ne sont jamais modifiés.
 
 ## Vidéos
 
-- **Réglages stables :** ils sont estimés une fois par vidéo, sur 8 images clés, pour que la couleur ne scintille pas. Seul le voile est suivi image par image, avec un lissage dans le temps.
-- **Encodage :** H.264 (CRF 21, débit plafonné à celui de la source) avec le son d'origine (converti en AAC) et la date de prise de vue. La sortie est toujours en `.mp4`.
-- **Vitesse :** sur la machine de test (2 cœurs), un clip 1080p à 30 i/s se traite à environ 4 images par seconde. Un ordinateur à 8 cœurs ira nettement plus vite.
+- **Réglages stables :** ils sont estimés une fois par vidéo, sur 8 images clés prises dans la partie gardée, pour que la couleur ne scintille pas. Seul le voile est suivi image par image, avec un lissage dans le temps.
+- **Ordre des opérations à l'export :** découpe, rotation, stabilisation, recadrage, puis correction des couleurs.
+- **Stabilisation :**
+  - des points sont suivis d'une image à l'autre (Lucas-Kanade), puis le mouvement est estimé (translation et rotation) ;
+  - la trajectoire est lissée sur 0,5 à 2 secondes, selon la force choisie ;
+  - sur une vidéo test secouée, le tremblé passe de 10,5 pixels à 0,06 pixel par image.
+- **Encodage :** H.264 (CRF 21, débit plafonné à celui de la source), avec le son d'origine converti en AAC et la date de prise de vue. La sortie est toujours en `.mp4`.
+- **Vitesse :** sur la machine de test (2 cœurs), un clip 1080p à 30 i/s se traite à environ 4 images par seconde. La stabilisation ajoute environ un quart de temps. Un ordinateur à 8 cœurs ira nettement plus vite.
+
+## Raccourcis clavier
+
+Dans l'atelier :
+
+| Touche | Action |
+| --- | --- |
+| ← → | Photo précédente ou suivante (parmi les fichiers affichés) |
+| Espace (maintenue) | Voir l'original |
+| R / Maj+R | Pivoter à droite / à gauche |
+| C | Recadrer (afficher ou masquer le cadre) |
+| Entrée, Échap | Terminer le recadrage |
+| Molette, double-clic | Zoom, ajuster à la fenêtre |
 
 ## Formats
 
@@ -76,7 +141,10 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 | PNG et TIFF 16 bits | 16 bits conservé |
 | MP4, MOV, AVI, MKV, M4V, MTS | MP4 H.264 + AAC |
 
-L'EXIF est conservé (appareil, date, réglages de prise de vue), tout comme le profil de couleur ICC. Une photo prise en portrait est redressée. Les chemins avec accents, comme « Plongée été », sont gérés.
+- **Métadonnées :** l'EXIF est conservé (appareil, date, réglages de prise de vue), tout comme le profil de couleur ICC.
+- **Orientation :** une photo prise en portrait est redressée.
+- **Chemins :** les noms avec accents, comme « Plongée été », sont gérés.
+- **JPEG :** qualité 92 en 4:2:0 par défaut. Une sortie fait à peu près la taille de l'original.
 
 Le RAW et le HEIC ne sont pas encore lus : convertissez-les d'abord en TIFF 16 bits ou en JPEG.
 
@@ -89,7 +157,7 @@ AquImage.bat image entree.jpg sortie.jpg
 AquImage.bat ui --port 8800
 ```
 
-`AquImage.bat lot --help` liste toutes les options.
+`AquImage.bat lot --help` liste toutes les options. Rotation, recadrage et stabilisation ne sont disponibles que dans l'atelier.
 
 ## Comment ça marche
 
@@ -97,9 +165,20 @@ AquImage estime tout sur une copie réduite d'environ 0,3 Mpx. Il applique ensui
 
 1. **Compensation des canaux affaiblis.** Méthode d'Ancuti et al. (2018) : R' = R + (Ḡ − R̄)(1 − R)·G. Le bleu est compensé de la même façon en eau verte.
 2. **Balance des blancs.** Méthode « gray-world » en lumière linéaire, calculée surtout sur les sujets proches pour que l'eau, souvent majoritaire, n'impose pas sa couleur.
-3. **Retrait du voile.** Prior du canal sombre (He et al. 2011). La lumière de l'eau est cherchée par quadtree, dans une zone voilée et uniforme, pour ne pas confondre un objet clair avec l'eau. La transmission est affinée par filtre guidé. La soustraction est bornée pixel par pixel, ce qui évite les ombres violettes.
-4. **Correction graduée.** Elle est pleine sur les sujets proches et partielle sur l'eau très lointaine, qui reste bleue au lieu de virer au gris ou au magenta. La part gardée est choisie automatiquement en testant les pixels lointains.
-5. **Tonalité, sans rien couper.** Niveaux à étirement limité (×2,5 au plus), gamma modéré, éclaircissement des ombres, vibrance, clarté sur les tons moyens. Enfin, une épaule douce compresse les hautes lumières vers le blanc sans les écrêter et sans changer leur teinte.
+3. **Retrait du voile.** Prior du canal sombre (He et al. 2011). La lumière de l'eau est cherchée par quadtree, dans une zone voilée et uniforme. La transmission est affinée par filtre guidé, et la soustraction est bornée pixel par pixel.
+4. **Eau et sujets traités différemment.**
+   - **Une carte « eau ou sujet » est dressée.** L'eau, ce sont les grandes zones lisses de sa couleur. Les sujets, ce sont les zones texturées : récif, épave, sable, reconnu à son grain. Poissons et bulles isolés sont ignorés.
+   - **Les sujets sont corrigés en entier, même au loin.**
+   - **L'eau garde sa teinte**, orientée vers un bleu azur quand l'appareil l'a enregistrée trop cyan. On n'y restaure que la luminance, pour ne pas amplifier plancton et bruit.
+5. **Garde-fous de couleur.**
+   - **Rouge reconstruit plafonné.** Là où l'original n'en a plus, il ne dépasse pas celui d'un sable beige : pas de taches orange.
+   - **Pas de rouge amplifié sans lumière.** Les noirs restent noirs, sans teinte bordeaux.
+   - **Pas de pourpre.** Le magenta et la lavande sont retirés des ombres, des tons neutres et des zones lisses. Les vrais sujets violets, texturés, sont préservés.
+6. **Tonalité, sans rien couper.**
+   - **Niveaux :** étirement limité (×2,5 au plus), point noir adouci, plus bas en eau laiteuse.
+   - **Exposition :** elle se règle sur les hautes lumières non écrêtées.
+   - **Tons moyens :** éclaircissement modéré, surtout sur la luminance, pour garder les couleurs. Une photo qui a déjà de vrais noirs et de vraies lumières (flash, fond noir) n'est presque pas éclaircie.
+   - **Finitions :** vibrance, puis clarté sur les tons moyens. Enfin, une épaule douce compresse les hautes lumières vers le blanc sans les écrêter.
 
 Ce que l'auto-réglage détecte, image par image :
 
@@ -110,19 +189,18 @@ Ce que l'auto-réglage détecte, image par image :
 | Photo déjà équilibrée (flash, mode plongée de l'appareil) | Correction douce |
 | Filtre rouge | Correction sans compensation du rouge |
 | Contre-jour vers la surface | Voile moins retiré, ombres débouchées, ciel préservé |
-| Pleine eau sans sujet, même en dégradé de lumière | Pas d'étirement (le bruit et le vignetage ne sont pas amplifiés), l'eau reste azur |
+| Pleine eau sans sujet, même en dégradé de lumière | Pas d'étirement ni de vibrance, l'eau reste azur |
 | Ombres virant au violet | Balance des blancs réduite automatiquement |
+| Photo déjà bien exposée | Ni éclaircissement marqué, ni ombres débouchées |
 
-Quelle que soit la photo, quatre garde-fous s'appliquent aussi :
-- **Eau lointaine :** l'eau lisse et lointaine garde sa teinte bleue. Les sujets texturés (récif, épave) sont corrigés en entier, même au loin.
-- **Couleur au loin :** elle suit une carte de distance lissée. Au loin, seule la luminance est restaurée : le plancton, les bulles et le bruit ne deviennent pas des taches roses ou vertes.
-- **Ombres et quasi-noirs :** le rouge n'est pas amplifié là où l'original n'a pas de lumière (plus de noirs bordeaux dans les épaves). Le magenta est retiré des ombres.
-- **Luminosité :** une photo claire à l'origine n'est pas assombrie, et les reflets écrêtés (soleil) ne dictent plus l'exposition.
-- **Eau laiteuse :** quand le plancher de luminance est haut (épave en eau verte), le point noir est abaissé davantage, pour éviter un rendu délavé.
+Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté.
 
-Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté. Ces règles ont été calibrées sur 35 photos réelles, puis validées sur 40 photos d'un voyage en mer Rouge (SeaLife DC2000), et sur 24 scènes simulées dont on connaît la vraie couleur.
+**Validation :** ces règles ont été calibrées sur 35 photos réelles et sur 24 scènes simulées dont on connaît la vraie couleur. Elles ont ensuite été vérifiées sur 1 045 photos d'un voyage en mer Rouge (SeaLife DC2000) et sur une sélection de 131 favoris. Les chiffres de chaque version sont dans l'historique.
 
-**Limite connue :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
+**Limites connues :**
+- **Dominantes déjà poussées :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
+- **Épaves en eau verte très voilée :** elles peuvent garder une petite tache verte ou rosée (DSCI1731, 1803).
+- **Photos hors de l'eau :** elles ne sont pas encore reconnues, et reçoivent une correction sous-marine.
 
 ## Historique
 
@@ -295,12 +373,12 @@ aquimage/
   core.py       moteur de correction (estimer petit, appliquer en grand)
   autotune.py   réglages automatiques par image et par vidéo
   fileio.py     lecture et écriture (EXIF, ICC, 16 bits, chemins Unicode)
-  video.py      vidéos (réglages par clip, lissage, ffmpeg + son)
+  video.py      vidéos (réglages par clip, découpe, stabilisation, recadrage, ffmpeg + son)
   batch.py      traitement par lot et rapport CSV
   server.py     serveur local et API (bibliothèque standard seulement)
-  web/          interface (HTML, CSS, JavaScript sans dépendance)
+  web/          interface (HTML, CSS, JavaScript sans dépendance ; i18n.js : 4 langues)
 bench/          banc d'essai à vérité terrain
 tests/          tests automatiques (pytest)
 ```
 
-Références : Ancuti et al., *Color Balance and Fusion for Underwater Image Enhancement*, IEEE TIP 2018. He, Sun et Tang, *Single Image Haze Removal Using Dark Channel Prior*, TPAMI 2011. He et Sun, *Fast Guided Filter*, 2015. Kim et al., *Optimized contrast enhancement for real-time image and video dehazing*, JVCIR 2013.
+Références : Ancuti et al., *Color Balance and Fusion for Underwater Image Enhancement*, IEEE TIP 2018. He, Sun et Tang, *Single Image Haze Removal Using Dark Channel Prior*, TPAMI 2011. He et Sun, *Fast Guided Filter*, 2015. Kim et al., *Optimized contrast enhancement for real-time image and video dehazing*, JVCIR 2013. Lucas et Kanade, *An Iterative Image Registration Technique*, IJCAI 1981 (stabilisation).
