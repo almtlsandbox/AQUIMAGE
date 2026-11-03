@@ -126,6 +126,14 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 
 ## Historique
 
+### 1.9.0
+
+Retour sur DSCI2004 et d'autres photos jugées trop claires et fades.
+
+- **Photos déjà bien exposées :** une photo qui a déjà de vrais noirs et de vraies hautes lumières (flash, fond noir volontaire) n'est presque plus éclaircie, et ses ombres ne sont plus débouchées. DSCI2004 garde son fond noir.
+- **Couleurs plus riches :** l'éclaircissement des tons moyens s'applique en grande partie à la luminance seule, au lieu de chaque canal séparément ; ce dernier pâlissait les couleurs. Cela ne s'applique pas là où le rouge est entièrement reconstruit, pour ne pas faire apparaître de fausses couleurs.
+- **Sur les 131 photos de la sélection :** 18 photos sont éclaircies de plus de 8 points au lieu de 29. Les couleurs vives gagnent en saturation (chroma au 90e centile : 25,5 → 26,7), sans plus de pourpre.
+
 ### 1.8.0
 
 - **Édition dans l'atelier :** recadrage par cadre, pour les photos et les vidéos, avec choix du format.

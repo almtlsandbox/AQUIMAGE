@@ -603,13 +603,36 @@ def _clip_weight(enc0: np.ndarray) -> np.ndarray:
     return (0.6 * np.clip((_max3(enc0) - 0.97) / 0.025, 0.0, 1.0)).astype(np.float32)
 
 
+GAMMA_CHROMA = 0.6     # part du gamma appliquée à la luminance seule (couleurs gardées)
+FULL_LIFT_KEEP = 0.25  # photo déjà pleine : part de l'éclaircissement auto conservée
+
+
+def tonal_fullness(enc0: np.ndarray) -> float:
+    """0..1 : l'original a-t-il déjà de vrais noirs ET de vraies hautes
+    lumières ?  (photo au flash, fond noir volontaire, scène bien exposée).
+    Une telle photo n'a pas besoin d'être éclaircie ni débouchée."""
+    y = enc0.reshape(-1, 3) @ LUMA_E
+    lo, hi = np.percentile(y, [1.0, 99.0])
+    return float(np.clip((hi - 0.62) / 0.2, 0.0, 1.0)
+                 * np.clip((0.10 - lo) / 0.07, 0.0, 1.0))
+
+
 def _post(enc: np.ndarray, lo: float, slope: float, gamma: float,
           tgain: np.ndarray, sat: float,
           clipw: Optional[np.ndarray] = None,
-          shadows: float = 0.0, vibrance: float = 0.0) -> np.ndarray:
+          shadows: float = 0.0, vibrance: float = 0.0,
+          nored: Optional[np.ndarray] = None) -> np.ndarray:
     x = np.maximum((enc - lo) * slope, 0.0)
     if abs(gamma - 1.0) > 1e-3:
-        x = np.power(x, gamma)
+        # Gamma en partie sur la luminance seule : un gamma par canal pâlit
+        # les couleurs quand il éclaircit (rapports entre canaux écrasés).
+        xc = np.power(x, gamma)
+        Y = np.maximum(x @ LUMA_E, 1e-5)
+        xl = x * (np.power(Y, gamma) / Y)[..., None]
+        # ... sauf là où le rouge est entièrement reconstruit : le gamma par
+        # canal y garde discrète une couleur qui n'existe pas dans l'original.
+        k = GAMMA_CHROMA if nored is None else (GAMMA_CHROMA * (1.0 - nored))[..., None]
+        x = xc + k * (xl - xc)
     if shadows > 1e-3:
         # Éclaircit les ombres (maximum vers L = 1/3), sans toucher aux blancs
         L = np.clip(x @ LUMA_E, 1e-4, 1.0)
@@ -866,11 +889,15 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
     g_min = max(0.66, (0.8 if target <= MID_TARGET else 0.74) - 0.14 * haze)
     g_auto = float(np.clip(np.log(target) / np.log(min(max(med, 0.02), 0.98)),
                            g_min, 1.25))
+    if g_auto < 1.0:
+        # Photo déjà pleine (vrais noirs, vraies lumières) : on n'éclaircit
+        # presque pas, un fond sombre au flash doit rester sombre.
+        g_auto = 1.0 - (1.0 - g_auto) * (1.0 - (1.0 - FULL_LIFT_KEEP) * tonal_fullness(enc0))
     gamma = g_auto * float(2.0 ** (-0.5 * s.exposure))
     tgain = (np.exp(np.array([0.10, 0.0, -0.10]) * s.temperature)
              * np.exp(np.array([0.05, -0.08, 0.05]) * s.tint)).astype(np.float32)
     out = shoulder(_post(enc, lo, slope, gamma, tgain, s.saturation, _clip_weight(enc0),
-                s.shadows, s.vibrance))
+                s.shadows, s.vibrance, nored))
     L = guide_of(out)
     clar_ab = guided_coeffs(L, L, max(4, int(round(0.08 * mm))), 0.02)
 
@@ -910,7 +937,7 @@ def _apply_strip(part: np.ndarray, plan: Plan, full_hw: Tuple[int, int],
                    no_red_weight(enc0))
     enc = _post(encode_srgb(rec * plan.pre), plan.lo, plan.slope, plan.gamma,
                 plan.tgain, s.saturation, _clip_weight(enc0),
-                s.shadows, s.vibrance)
+                s.shadows, s.vibrance, no_red_weight(enc0))
     if plan.clarity > 1e-3:
         a = upsample_rows(plan.clar_ab[0], full_hw, y0, y1)
         b = upsample_rows(plan.clar_ab[1], full_hw, y0, y1)
@@ -993,7 +1020,7 @@ def refresh_maps(plan: Plan, img: np.ndarray,
                    no_red_weight(enc0))
     out = shoulder(_post(encode_srgb(rec * plan.pre), plan.lo, plan.slope,
                          plan.gamma, plan.tgain, s.saturation, _clip_weight(enc0),
-                s.shadows, s.vibrance))
+                s.shadows, s.vibrance, no_red_weight(enc0)))
     L = guide_of(out)
     clar_ab = guided_coeffs(L, L, max(4, int(round(0.08 * mm))), 0.02)
     if prev is not None and smooth > 0 and prev.clar_ab[0].shape == clar_ab[0].shape:

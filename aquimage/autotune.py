@@ -82,6 +82,9 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
         scene.append("contre-jour")
         s.strength = min(s.strength, 0.45)
         s.shadows = _clip(0.25 + 1.5 * bright, 0.3, 0.6)
+    else:
+        # Ombres débouchées seulement si l'original en a besoin
+        s.shadows = s.shadows * (1.0 - core.tonal_fullness(enc0))
     if texture < 0.07 or fine < OPEN_WATER_FINE:
         # Pleine eau sans sujet : ne pas étirer le bruit ni le vignetage
         scene.append("pleine eau")
