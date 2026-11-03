@@ -306,7 +306,7 @@ def process_video(src: str, dst: str, settings: Settings,
                "-map", "0:v:0", "-map", "1:a?", "-map_metadata", "1",
                "-c:v", "libx264", "-preset", preset, "-crf", str(int(crf)),
                ] + rate_cap + [
-               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                "-movflags", "+faststart", "-f", "mp4", tmp_dst]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                 stderr=errlog, creationflags=_NO_WINDOW)
@@ -314,9 +314,26 @@ def process_video(src: str, dst: str, settings: Settings,
         writer = cv2.VideoWriter(tmp_dst, cv2.VideoWriter_fourcc(*"mp4v"),
                                  fps, (ow, oh))
 
+    def ffmpeg_message() -> str:
+        try:
+            errlog.seek(0)
+            return errlog.read().decode("utf-8", "replace").strip()[-800:]
+        except Exception:
+            return ""
+
     def write(rgb: np.ndarray) -> None:
         if proc is not None:
-            proc.stdin.write(np.ascontiguousarray(rgb).tobytes())
+            try:
+                proc.stdin.write(np.ascontiguousarray(rgb).tobytes())
+            except OSError as exc:
+                # ffmpeg s'est arrêté (Windows : « Invalid argument ») : on
+                # remonte son propre message, plus parlant.
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    pass
+                raise IOError("ffmpeg s'est arrêté pendant l'encodage : "
+                              + (ffmpeg_message() or str(exc))) from exc
         else:
             writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
 
@@ -350,8 +367,7 @@ def process_video(src: str, dst: str, settings: Settings,
             proc.stdin.close()
             rc = proc.wait()
             if rc != 0:
-                errlog.seek(0)
-                raise IOError("ffmpeg : " + errlog.read().decode("utf-8", "replace")[-800:])
+                raise IOError("ffmpeg : " + ffmpeg_message())
         else:
             writer.release()
         os.replace(tmp_dst, dst)

@@ -575,3 +575,17 @@ def test_video_trim_crop_stabilize(tmp_path):
     assert 19 <= info["frames"] <= 22
     assert info["width"] % 2 == 0 and abs(info["width"] - 384) <= 2
     assert jitter(dst) < 0.3 * jitter(src)
+
+
+@pytest.mark.skipif(not video.ffmpeg_exe(), reason="ffmpeg absent")
+def test_video_audio_shorter_than_video(tmp_path):
+    """Régression 1.8/1.9 : son plus court que l'image -> ffmpeg s'arrêtait
+    (-shortest) et l'export échouait (« Invalid argument » sous Windows)."""
+    ff = video.ffmpeg_exe()
+    src = str(tmp_path / "a.mp4")
+    subprocess.run([ff, "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x240:rate=25:duration=3", "-f", "lavfi", "-i",
+                    "sine=frequency=440:duration=1.5", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", src], check=True)
+    info = video.process_video(src, str(tmp_path / "o.mp4"), Settings())
+    assert info["frames"] == 75 and video.probe(str(tmp_path / "o.mp4"))["frames"] >= 74

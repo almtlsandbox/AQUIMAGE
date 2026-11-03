@@ -204,6 +204,10 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 
 ## Historique
 
+### 1.9.1
+
+- **Correctif vidéo :** l'export échouait avec « OSError: [Errno 22] Invalid argument » quand la piste son était plus courte que l'image, ce qui est fréquent. Depuis la 1.8, l'option `-shortest` faisait arrêter ffmpeg à la fin du son, alors qu'AquImage envoyait encore des images. L'option est retirée, et si ffmpeg s'arrête malgré tout, son propre message d'erreur est affiché.
+
 ### 1.9.0
 
 Retour sur DSCI2004 et d'autres photos jugées trop claires et fades.
