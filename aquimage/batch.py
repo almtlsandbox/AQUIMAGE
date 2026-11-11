@@ -256,7 +256,7 @@ class BatchJob:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 list(pool.map(self._do_image, images))
             for it in videos:
-                self._do_video(it, workers=max(2, workers))
+                self._do_video(it, workers=self.opts.workers)
             self.state = "annulé" if self.cancel.is_set() else "terminé"
         except Exception as exc:          # pragma: no cover
             self.state, self.error = "erreur", str(exc)

@@ -31,6 +31,7 @@ from .core import Settings
 
 VIDEO_ANALYSIS_SIDE = 480
 SMOOTH = 0.6           # lissage temporel des cartes (part de l'image précédente)
+MAPS_EVERY = 2         # cartes recalculées une image sur deux
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -217,7 +218,7 @@ def process_video(src: str, dst: str, settings: Settings,
                   progress: Optional[Callable[[float], None]] = None,
                   cancel: Optional[threading.Event] = None,
                   crf: int = 21, preset: str = "veryfast",
-                  workers: int = 2, rotate: int = 0,
+                  workers: int = 0, rotate: int = 0,
                   crop: Optional[Sequence[float]] = None,
                   trim: Sequence[float] = (0.0, 1.0),
                   stabilize: float = 0.0) -> dict:
@@ -229,6 +230,8 @@ def process_video(src: str, dst: str, settings: Settings,
     → correction des couleurs.
     """
     t0 = time.time()
+    if workers <= 0:                       # automatique : une image par cœur
+        workers = max(1, min(8, os.cpu_count() or 2))
     rotate = int(rotate) % 4
     a = float(min(max(trim[0], 0.0), 1.0))
     b = float(min(max(trim[1], a), 1.0))
@@ -347,10 +350,16 @@ def process_video(src: str, dst: str, settings: Settings,
                 if cancel is not None and cancel.is_set():
                     raise Cancelled()
                 rgb = prepare(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), idx)
-                small = core.resize_max(rgb, VIDEO_ANALYSIS_SIDE)
-                prev = core.refresh_maps(gplan, rgb, small, prev,
-                                         smooth=SMOOTH if prev is not None else 0.0)
-                pending.append(pool.submit(core.apply_plan, rgb, prev))
+                # Les cartes (transmission, clarté) varient lentement : elles
+                # sont recalculées une image sur MAPS_EVERY, avec le même
+                # lissage dans le temps.
+                if prev is None or idx % MAPS_EVERY == 0:
+                    small = core.resize_max(rgb, VIDEO_ANALYSIS_SIDE)
+                    prev = core.refresh_maps(
+                        gplan, rgb, small, prev,
+                        smooth=SMOOTH ** MAPS_EVERY if prev is not None else 0.0)
+                # Une image par fil, bandes en séquence : pas de fils imbriqués
+                pending.append(pool.submit(core.apply_plan, rgb, prev, None, None, 1))
                 while len(pending) > 2 * max(1, workers):
                     write(pending.popleft().result())
                     done += 1

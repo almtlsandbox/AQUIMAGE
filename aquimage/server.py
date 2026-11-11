@@ -312,8 +312,7 @@ def _export_video(task, sess: Session, settings: Settings, dst: str,
     video.process_video(sess.path, dst, settings, rotate=rot, crop=crop,
                         trim=trim, stabilize=stab,
                         progress=lambda f: task.__setitem__("progress", f),
-                        cancel=task["cancel"],
-                        workers=max(2, min(4, (os.cpu_count() or 2) // 2)))
+                        cancel=task["cancel"])
     return dst
 
 

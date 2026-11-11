@@ -88,9 +88,22 @@ def test_preview_matches_full_resolution(img):
 def test_strips_equal_single_pass(img, monkeypatch):
     plan = core.build_plan(img, Settings())
     a = core.apply_plan(img, plan)
-    monkeypatch.setattr(core, "STRIP_ROWS", 10_000)
-    b = core.apply_plan(img, plan)
+    monkeypatch.setattr(core, "STRIP_PIXELS", 10_000_000)
+    b = core.apply_plan(img, plan, workers=1)
     assert np.abs(a.astype(int) - b).max() <= 1
+
+
+def test_parallel_strips_identical():
+    rng = np.random.default_rng(3)
+    big = rng.integers(0, 255, (700, 900, 3), dtype=np.uint8)
+    big[..., 0] //= 3
+    plan = core.build_plan(big, Settings())
+    seq = core.apply_plan(big, plan, workers=1)
+    par = core.apply_plan(big, plan, workers=4)
+    assert np.array_equal(seq, par)
+    seen = []
+    core.apply_plan(big, plan, progress=seen.append)
+    assert seen and abs(seen[-1] - 1.0) < 1e-6 and seen == sorted(seen)
 
 
 def test_16bit_kept(img):

@@ -42,7 +42,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 ANALYSIS_MAX_SIDE = 640          # côté max de la copie d'analyse
-STRIP_ROWS = 16                  # hauteur des bandes : petites, elles tiennent dans le cache
+STRIP_PIXELS = 100_000           # pixels par bande : petites, elles tiennent dans le cache
 MAX_WORKERS = max(1, min(8, os.cpu_count() or 1))   # bandes traitées en parallèle
 LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)    # linéaire Rec.709
 LUMA_E = np.array([0.299, 0.587, 0.114], np.float32)     # encodé (Rec.601)
@@ -1148,7 +1148,8 @@ def apply_plan(img: np.ndarray, plan: Plan, out_dtype=None,
         out_dtype = img.dtype if img.dtype in (np.uint8, np.uint16) else np.uint8
     H, W = img.shape[:2]
     out = np.empty((H, W, 3), out_dtype)
-    spans = [(y0, min(H, y0 + STRIP_ROWS)) for y0 in range(0, H, STRIP_ROWS)]
+    rows = int(min(256, max(8, round(STRIP_PIXELS / max(W, 1)))))
+    spans = [(y0, min(H, y0 + rows)) for y0 in range(0, H, rows)]
 
     def work(span):
         y0, y1 = span
