@@ -165,6 +165,10 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
         else:
             break
 
+    # 5 bis. Réduction du bruit, selon ce que la correction l'a amplifié
+    noise_gain = float(plan.stats.get("noise_gain", 1.0))
+    s.denoise = _clip((noise_gain - 1.1) / 0.8, 0.0, 1.0)
+
     # 6. Clarté selon le contraste obtenu (plus douce si déjà contrasté)
     std = float(core.guide_of(core.to_float(out)).std())
     s.contrast = _clip(0.35 - 1.5 * (std - 0.15), 0.08, 0.35)
@@ -185,6 +189,7 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
         "red_p90": round(ev["red_p90"], 3),
         "sky": round(ev["sky"], 3),
         "air": round(max(shift, intact), 3),
+        "noise_gain": round(noise_gain, 2),
     }
     return s, diag
 

@@ -81,6 +81,7 @@ class Settings:
     white_clip: float = 0.2    # % de pixels au blanc (avant l'épaule)
     stretch: float = 2.5       # étirement maximal des niveaux
     auto_tone: float = 1.0     # part de la luminosité automatique (0 = aucune)
+    denoise: float = 0.0       # réduction du bruit (eau, zones lisses, ombres), 0..1
 
     LIMITS = {
         "red_comp": (0.0, 2.0), "color": (0.0, 1.0), "max_gain": (1.0, 12.0),
@@ -91,7 +92,7 @@ class Settings:
         "saturation": (0.0, 2.0), "black_clip": (0.0, 5.0),
         "white_clip": (0.0, 5.0), "stretch": (1.0, 4.0),
         "vibrance": (0.0, 1.0), "shadows": (0.0, 1.0), "black_level": (0.0, 1.0),
-        "auto_tone": (0.0, 1.0),
+        "auto_tone": (0.0, 1.0), "denoise": (0.0, 1.0),
     }
 
     def clamp(self) -> "Settings":
@@ -885,6 +886,133 @@ def _clarity_p(enc, a, b, amount):
 
 
 # ---------------------------------------------------------------------------
+# Réduction du bruit
+# ---------------------------------------------------------------------------
+# La correction amplifie le bruit (gain du rouge, retrait du voile, niveaux).
+# Dans l'eau et les zones lisses, et dans les ombres, il se voit : mouchetis
+# de couleur surtout.  On y lisse la couleur (chrominance) et, plus
+# légèrement, le grain fin de la luminance ; les zones texturées (récif,
+# sable, épave) et les contours ne sont pas touchés.
+
+DN_CHROMA_SIGMA = 0.0011    # lissage de la couleur (part du grand côté)
+DN_LUMA_SIGMA = 0.0008      # lissage du grain fin de luminance
+DN_LUMA_T = 0.02           # écart de luminance en dessous duquel c'est du grain
+DN_EDGE = 0.05              # écart de luminance qui signale un contour (poisson, bord)
+DN_SHADOW_Y = (0.15, 0.30)  # luminance : ombre pleine … pas une ombre
+
+
+def smooth_zones(guide: np.ndarray) -> np.ndarray:
+    """Carte 0..1 des zones lisses (eau, voile, dégradés) de la copie réduite."""
+    fine = fine_texture(guide)
+    ko = _odd(0.03 * min(fine.shape[:2]))
+    fine = cv2.morphologyEx(fine, cv2.MORPH_OPEN,
+                            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ko, ko)))
+    w = np.clip((TEX_LO - fine) / (0.5 * TEX_LO), 0.0, 1.0).astype(np.float32)
+    sig = max(1.0, 0.01 * min(w.shape[:2]))
+    return cv2.GaussianBlur(w, (0, 0), sig, borderType=cv2.BORDER_REFLECT)
+
+
+def _zone_noise(gray: np.ndarray, zones: np.ndarray) -> float:
+    """Grain moyen (résidu du laplacien d'Immerkær) dans les zones lisses."""
+    k = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], np.float32)
+    r = np.abs(cv2.filter2D(gray.astype(np.float32), -1, k, borderType=cv2.BORDER_REFLECT))
+    m = zones > 0.5
+    if m.sum() < 200:
+        return float(r.mean())
+    return float(r[m].mean())
+
+
+def _denoise_rows(img: np.ndarray, dn: np.ndarray, amount: float,
+                  full_hw: Tuple[int, int], ya: int, yb: int, y0: int, y1: int,
+                  out: np.ndarray) -> None:
+    """Réduit le bruit des lignes y0..y1 ; *img* couvre ya..yb (marge).
+    Tout se fait en flottant : seuls les écarts de couleur et de grain sont
+    ajoutés à l'image, sans aller-retour arrondi par un autre espace."""
+    H, W = full_hw
+    top = np.float32(65535 if img.dtype == np.uint16 else 255)
+    rgb = [img[..., c].astype(np.float32) for c in range(3)]
+    for p in rgb:
+        p /= top
+    Y = _dot(rgb, (0.299, 0.587, 0.114))
+    blur = lambda a, sg: cv2.GaussianBlur(a, (0, 0), sg, borderType=cv2.BORDER_REFLECT)
+    sc = max(0.8, DN_CHROMA_SIGMA * max(H, W))
+    Yb = blur(Y, sc)
+    zones = np.clip(upsample_rows(dn, full_hw, ya, yb), 0.0, 1.0)
+    shadow = np.clip((DN_SHADOW_Y[1] - Yb) / (DN_SHADOW_Y[1] - DN_SHADOW_Y[0]), 0.0, 1.0)
+    shadow *= 0.7
+    wc = np.maximum(zones, shadow)
+    # Contours (poisson sur l'eau, bord d'un récif) : la couleur n'y bave pas
+    edge = np.abs(Y - Yb)
+    edge *= -1.0 / DN_EDGE
+    edge += 1.5
+    np.clip(edge, 0.0, 1.0, out=edge)
+    wc *= edge
+    wc *= amount
+    # Chrominance (R − Y, B − Y) lissée
+    cr = rgb[0] - Y
+    cb = rgb[2] - Y
+    dcr = blur(cr, sc)
+    dcr -= cr
+    dcr *= wc
+    dcb = blur(cb, sc)
+    dcb -= cb
+    dcb *= wc
+    # Y inchangé : dR = dcr, dB = dcb, dV = −(0,299·dcr + 0,114·dcb) / 0,587
+    dg = dcr * (-0.299 / 0.587)
+    dg -= dcb * (0.114 / 0.587)
+    sl = DN_LUMA_SIGMA * max(H, W)
+    if sl >= 0.7:
+        # Grain fin : les petits écarts sont atténués, les grands (détails) gardés
+        d = Y - blur(Y, sl)
+        d2 = d * d
+        k = d2 / (d2 + DN_LUMA_T * DN_LUMA_T)
+        k -= 1.0
+        k *= d
+        zones *= 0.85 * amount
+        k *= zones                          # = −(part du grain retirée)
+        dcr += k
+        dg += k
+        dcb += k
+    a = y0 - ya
+    b = a + (y1 - y0)
+    for c, dlt in ((0, dcr), (1, dg), (2, dcb)):
+        v = rgb[c][a:b]
+        v += dlt[a:b]
+        np.clip(v, 0.0, 1.0, out=v)
+        v *= top
+        v += 0.5
+        out[y0:y1, :, c] = v.astype(img.dtype)
+
+
+def denoise(img: np.ndarray, plan: "Plan", amount: Optional[float] = None,
+            workers: Optional[int] = None) -> np.ndarray:
+    """Réduit le bruit d'une image corrigée (uint8/uint16), par tranches."""
+    amount = plan.settings.denoise if amount is None else amount
+    if amount <= 0.02 or plan.dn is None:
+        return img
+    H, W = img.shape[:2]
+    margin = int(np.ceil(4.5 * max(0.8, DN_CHROMA_SIGMA * max(H, W)))) + 2
+    rows = int(min(H, max(64, round(1_500_000 / max(W, 1)))))
+    spans = [(y0, min(H, y0 + rows)) for y0 in range(0, H, rows)]
+    out = np.empty_like(img)
+
+    def work(span):
+        y0, y1 = span
+        ya, yb = max(0, y0 - margin), min(H, y1 + margin)
+        _denoise_rows(img[ya:yb], plan.dn, float(amount), (H, W), ya, yb, y0, y1, out)
+
+    if workers is None:
+        workers = MAX_WORKERS
+    if workers <= 1 or len(spans) < 2 or threading.current_thread().name.startswith(
+            "aquimage-strip"):
+        for sp in spans:
+            work(sp)
+    else:
+        list(_pool().map(work, spans))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Plan de correction
 # ---------------------------------------------------------------------------
 
@@ -914,6 +1042,7 @@ class Plan:
     capw: Optional[np.ndarray] = None    # plafond du rouge (zones lisses sans rouge)
     clipk: float = 1.0                   # blanchiment des hautes lumières écrêtées
     cast: Optional[np.ndarray] = None    # (h, w, 2) dominante locale des surfaces neutres
+    dn: Optional[np.ndarray] = None      # zones lisses (0..1) où le bruit est réduit
 
     def info(self) -> dict:
         d = dict(self.stats)
@@ -1141,6 +1270,9 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
                          _clip_weight(enc0, clipk), s.shadows, s.vibrance, nored))
     L = guide_of(out)
     clar_ab = guided_coeffs(L, L, max(4, int(round(0.08 * mm))), 0.02)
+    dn = smooth_zones(guide)
+    # Bruit multiplié par la correction, mesuré dans les zones lisses
+    noise_gain = _zone_noise(L, dn) / max(_zone_noise(guide, dn), 1e-4)
 
     stats = {
         "mean_rgb": [round(float(v), 4) for v in m],
@@ -1151,12 +1283,13 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
         "t_far": round(t_far, 3),
         "open_water": round(open_water, 3),
         "cast": round(cast_peak, 3),
+        "noise_gain": round(float(noise_gain), 2),
         "auto_keep": round(choose_keep(enc0, tcol, comp, water, g, s), 3),
     }
     return Plan(settings=s, comp=comp, gains=g, water=water, keep=keep,
                 t_ab=t_ab, pre=pre, lo=lo, slope=slope, gamma=gamma, tgain=tgain,
                 clar_ab=clar_ab, clarity=1.2 * s.contrast, stats=stats, tcol=tcol,
-                wtone=wtone, capw=capw, clipk=clipk, cast=cast)
+                wtone=wtone, capw=capw, clipk=clipk, cast=cast, dn=dn)
 
 
 # ---------------------------------------------------------------------------
@@ -1274,7 +1407,7 @@ def apply_plan(img: np.ndarray, plan: Plan, out_dtype=None,
             y1 = work(sp)
             if progress:
                 progress(y1 / H)
-        return out
+        return denoise(out, plan, workers=1)
     done = 0
     sem = threading.Semaphore(workers)       # au plus *workers* bandes à la fois
 
@@ -1286,7 +1419,7 @@ def apply_plan(img: np.ndarray, plan: Plan, out_dtype=None,
         done += 1
         if progress:
             progress(done / len(spans))
-    return out
+    return denoise(out, plan, workers=workers)
 
 
 def transmission_map(plan: Plan, img: np.ndarray) -> np.ndarray:
@@ -1365,7 +1498,7 @@ def refresh_maps(plan: Plan, img: np.ndarray,
                 keep=plan.keep, t_ab=t_ab, pre=plan.pre, lo=plan.lo, slope=plan.slope,
                 gamma=plan.gamma, tgain=plan.tgain, clar_ab=clar_ab,
                 clarity=plan.clarity, stats=plan.stats, tcol=tcol, wtone=plan.wtone,
-                capw=capw, clipk=plan.clipk, cast=cast)
+                capw=capw, clipk=plan.clipk, cast=cast, dn=smooth_zones(guide))
 
 
 def merge_plans(plans) -> Plan:
@@ -1383,6 +1516,6 @@ def merge_plans(plans) -> Plan:
                 gamma=float(np.median([p.gamma for p in plans])),
                 tgain=p0.tgain, clar_ab=p0.clar_ab, clarity=p0.clarity,
                 stats=p0.stats, tcol=p0.tcol, capw=p0.capw, clipk=p0.clipk,
-                cast=p0.cast,
+                cast=p0.cast, dn=p0.dn,
                 wtone=(None if any(p.wtone is None for p in plans)
                        else med("wtone").astype(np.float32)))
