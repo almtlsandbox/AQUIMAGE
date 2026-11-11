@@ -589,3 +589,25 @@ def test_video_audio_shorter_than_video(tmp_path):
                     "-pix_fmt", "yuv420p", "-c:a", "aac", src], check=True)
     info = video.process_video(src, str(tmp_path / "o.mp4"), Settings())
     assert info["frames"] == 75 and video.probe(str(tmp_path / "o.mp4"))["frames"] >= 74
+
+
+# ---------------------------------------------------------------------------
+# Vraies photos : non-régression de la correction automatique
+# ---------------------------------------------------------------------------
+
+def test_real_photos_no_regression():
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location(
+        "photo_bench", os.path.join(here, "photo_bench.py"))
+    pb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pb)
+    with open(pb.BASELINE, encoding="utf-8") as f:
+        base = json.load(f)
+    res = pb.run()
+    assert len(res) == len(base) >= 30
+    bad = pb.compare(res, base)
+    assert not bad, "dérives : %s" % bad[:8]
+    # Garde-fous absolus, quelle que soit la référence
+    assert max(r["clipped"] for r in res.values()) < 0.5
+    assert np.mean([r["purple"] for r in res.values()]) < 1.0

@@ -28,6 +28,9 @@ Toutes les tailles de fenêtre sont des fractions de la taille de l'image.
 """
 from __future__ import annotations
 
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, fields
 from typing import Dict, Optional, Tuple
 
@@ -39,7 +42,8 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 ANALYSIS_MAX_SIDE = 640          # côté max de la copie d'analyse
-STRIP_ROWS = 256                 # hauteur des bandes pour apply_plan
+STRIP_ROWS = 16                  # hauteur des bandes : petites, elles tiennent dans le cache
+MAX_WORKERS = max(1, min(8, os.cpu_count() or 1))   # bandes traitées en parallèle
 LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)    # linéaire Rec.709
 LUMA_E = np.array([0.299, 0.587, 0.114], np.float32)     # encodé (Rec.601)
 PRE_PCT = 99.5                   # centile des hautes lumières tenu sous l'épaule
@@ -288,6 +292,12 @@ def water_quadtree(img: np.ndarray, prior: np.ndarray, gray: np.ndarray,
 SIG_Y0, SIG_Y1 = 0.002, 0.03   # luminance linéaire : aucun signal -> signal suffisant
 
 
+def _smooth01(x: np.ndarray) -> np.ndarray:
+    """Transition douce 3x² − 2x³ de x borné à [0, 1]."""
+    x = np.clip(x, 0.0, 1.0)
+    return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
+
+
 def signal_weight(y_lin: np.ndarray) -> np.ndarray:
     """0 là où l'original n'a quasiment pas de lumière (le rouge n'y est que
     du bruit), 1 dès qu'il y a assez de signal pour corriger la couleur."""
@@ -296,7 +306,8 @@ def signal_weight(y_lin: np.ndarray) -> np.ndarray:
 
 
 def _compensate(enc: np.ndarray, comp: np.ndarray,
-                weight: Optional[np.ndarray] = None) -> np.ndarray:
+                weight: Optional[np.ndarray] = None,
+                sig: Optional[np.ndarray] = None) -> np.ndarray:
     """Compensation d'Ancuti.  comp = (k_R, k_B) = α·(Ḡ − R̄), α·(Ḡ − B̄).
 
     *weight* (carte 0..1) module la compensation : pleine sur les sujets
@@ -307,7 +318,8 @@ def _compensate(enc: np.ndarray, comp: np.ndarray,
         G = enc[..., 1]
     else:
         # Pas de rouge inventé dans le quasi-noir (sinon noirs bordeaux)
-        sig = signal_weight(decode_linear(enc) @ LUMA)
+        if sig is None:
+            sig = signal_weight(decode_linear(enc) @ LUMA)
         G = enc[..., 1] * weight * sig
     if comp[0] > 0:
         R = enc[..., 0]
@@ -370,10 +382,13 @@ NORED_R0, NORED_R1 = 0.04, 0.10   # rouge/(vert+bleu) de l'original : nul … in
 RED_OVER_GREEN = 1.12             # rouge reconstruit ≤ 1,12 × vert (sable beige)
 
 
-def no_red_weight(enc0: np.ndarray) -> np.ndarray:
+def no_red_weight(enc0: Optional[np.ndarray],
+                  lin: Optional[np.ndarray] = None) -> np.ndarray:
     """1 là où l'original n'a quasiment pas de rouge : tout le rouge y est
-    reconstruit, il ne doit pas dépasser celui d'un sable beige."""
-    lin = decode_linear(enc0)
+    reconstruit, il ne doit pas dépasser celui d'un sable beige.
+    *lin* : original déjà décodé en linéaire (évite de le refaire)."""
+    if lin is None:
+        lin = decode_linear(enc0)
     ratio = lin[..., 0] / np.maximum(lin[..., 1] + lin[..., 2], 1e-4)
     x = np.clip((NORED_R1 - ratio) / (NORED_R1 - NORED_R0), 0.0, 1.0)
     return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
@@ -534,6 +549,24 @@ def water_tone(rec: np.ndarray, tc: np.ndarray, keep: float) -> np.ndarray:
     return f.astype(np.float32)
 
 
+def _planes(x: np.ndarray):
+    """(H, W, 3) -> trois plans contigus.  Les calculs plan par plan sont
+    bien plus rapides que la diffusion sur un dernier axe de longueur 3."""
+    return [np.array(x[..., c], order="C") for c in range(3)]
+
+
+def _stack(p) -> np.ndarray:
+    return np.stack(p, axis=-1)
+
+
+def _dot(p, w) -> np.ndarray:
+    """Somme pondérée de trois plans (luminance)."""
+    y = p[0] * w[0]
+    y += p[1] * w[1]
+    y += p[2] * w[2]
+    return y
+
+
 def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
              gains: np.ndarray, keep: float, s: Settings,
              tc: Optional[np.ndarray] = None,
@@ -545,56 +578,87 @@ def _restore(lin: np.ndarray, t: np.ndarray, water: np.ndarray,
     W(x) = G(x) · [lin + s·((lin − A)/max(t, t_min) + A − lin)]
     G(x) = g ** (1 − keep·(1 − t(x))²)   (correction partielle, eau lointaine seulement)
     """
-    tt = np.maximum(t, s.t_min)[..., None]
+    return _stack(_restore_p(_planes(lin), t, water, gains, keep, s, tc, wtone,
+                             capw, nored))
+
+
+def _restore_p(lin, t, water, gains, keep, s, tc=None, wtone=None, capw=None,
+               nored=None, y_lin=None):
+    """``_restore`` sur trois plans (liste R, G, B) ; retourne trois plans."""
+    tt = np.maximum(t, np.float32(s.t_min))
+    omt = 1.0 - tt
     # Voile à retirer V = A·(1 − t), borné pixel par pixel : jamais plus de
     # 90 % d'un canal, avec un facteur commun aux 3 canaux (sinon les ombres
     # perdent leur vert et virent au violet).
-    veil = water * (1.0 - tt)
-    f = np.clip(_min3(0.9 * lin / np.maximum(veil, 1e-6))[..., None],
-                0.0, 1.0)
-    te = 1.0 - f * (1.0 - tt)
-    rec = lin + s.strength * ((lin - water * (1.0 - te)) / te - lin)
+    f = None
+    for c in range(3):
+        q = 0.9 * lin[c] / np.maximum(water[c] * omt, 1e-6)
+        f = q if f is None else np.minimum(f, q, out=f)
+    np.clip(f, 0.0, 1.0, out=f)
+    f *= omt                               # = 1 − te
+    te = 1.0 - f
+    k = np.float32(s.strength)
+    rec = [lin[c] + k * ((lin[c] - water[c] * f) / te - lin[c]) for c in range(3)]
     # Au loin (t faible), le retrait du voile divise les écarts de teinte par
     # t : plancton, bulles et bruit deviennent des taches roses ou vertes.
     # On n'y restaure que la luminance ; la couleur complète ne revient que
     # sur les sujets proches.
     tg = t if tc is None else tc
-    wcol = np.clip((tg - CHROMA_T0) / (CHROMA_T1 - CHROMA_T0), 0.0, 1.0)[..., None]
+    wcol = np.clip((tg - CHROMA_T0) / (CHROMA_T1 - CHROMA_T0), 0.0, 1.0)
+    if y_lin is None:
+        y_lin = _dot(lin, LUMA)
     if (wcol < 1.0).any():
-        y_rec = np.maximum(rec, 0.0) @ LUMA
-        y_lin = np.maximum(lin @ LUMA, 1e-6)
-        rec_lum = lin * (y_rec / y_lin)[..., None]
-        rec = rec_lum + wcol * (rec - rec_lum)
-    expo = (1.0 - keep * far_weight(tg)) if keep > 0 else np.ones(t.shape, np.float32)
+        y_rec = _dot([np.maximum(r, 0.0) for r in rec], LUMA)
+        ratio = y_rec / np.maximum(y_lin, 1e-6)
+        for c in range(3):
+            lum = lin[c] * ratio
+            rec[c] -= lum
+            rec[c] *= wcol
+            rec[c] += lum
+    fw = far_weight(tg) if keep > 0 else None
+    expo = (1.0 - keep * fw) if keep > 0 else None
     # Sans signal, on n'amplifie pas (le rouge n'y est que du bruit) ; les
     # réductions de canal, elles, restent appliquées (sinon teinte lavande).
-    lg = np.log(gains)[None, None, :]
-    sig = signal_weight(np.maximum(lin @ LUMA, 0.0))[..., None]
-    lg = np.where(lg > 0, lg * sig, lg)
-    G = np.exp(lg * expo[..., None])
-    if wtone is not None and keep > 0:
-        # Concentré sur l'eau franchement lointaine (pas le récif à mi-distance)
-        G = G * np.exp(np.log(wtone)[None, None, :]
-                       * (keep * far_weight(tg) ** 2)[..., None])
-    out = np.maximum(rec, 0.0) * G
+    lg = np.log(gains)
+    sig = None
+    out = []
+    for c in range(3):
+        if lg[c] > 0:
+            if sig is None:
+                sig = signal_weight(np.maximum(y_lin, 0.0))
+            e = lg[c] * sig
+            if expo is not None:
+                e *= expo
+        else:
+            e = lg[c] * expo if expo is not None else None
+        if wtone is not None and keep > 0:
+            # Concentré sur l'eau franchement lointaine (pas le récif à mi-distance)
+            w2 = float(np.log(wtone[c])) * (keep * fw ** 2)
+            e = w2 if e is None else e + w2
+        o = np.maximum(rec[c], 0.0)
+        if e is None:
+            o *= gains[c]
+        else:
+            o *= np.exp(e)
+        out.append(o)
     if nored is not None:
         # Rouge entièrement reconstruit : pas plus qu'un sable beige (sinon
         # taches orange au soleil, rouge-violet dans l'eau).
-        over = np.maximum(out[..., 0] - RED_OVER_GREEN * out[..., 1], 0.0)
+        over = np.maximum(out[0] - RED_OVER_GREEN * out[1], 0.0)
         if over.any():
-            out = out.copy()
-            out[..., 0] -= nored * over
+            over *= nored
+            out[0] -= over
     if capw is not None:
         # Zones lisses sans rouge dans l'original (eau, même sombre ou au
         # bord d'un récif) : le rouge ajouté n'y porte aucune information.
         # S'il fait passer le pixel au violet (rouge ET bleu au-dessus du
         # vert), on retire cet excès de rouge.
         # Eau bleue lisse : rouge un peu sous le vert (sinon lavande)
-        lim = np.where(out[..., 2] > out[..., 1], WATER_RG_CAP * out[..., 1], out[..., 1])
-        m = np.maximum(np.minimum(out[..., 0], np.maximum(out[..., 2], lim)) - lim, 0.0)
+        lim = out[1] * (1.0 - (1.0 - WATER_RG_CAP) * (out[2] > out[1]))
+        m = np.maximum(np.minimum(out[0], np.maximum(out[2], lim)) - lim, 0.0)
         if m.any():
-            out = out.copy()
-            out[..., 0] -= capw * m
+            m *= capw
+            out[0] -= m
     return out
 
 
@@ -622,37 +686,73 @@ def _post(enc: np.ndarray, lo: float, slope: float, gamma: float,
           clipw: Optional[np.ndarray] = None,
           shadows: float = 0.0, vibrance: float = 0.0,
           nored: Optional[np.ndarray] = None) -> np.ndarray:
-    x = np.maximum((enc - lo) * slope, 0.0)
+    return _stack(_post_p(_planes(enc), lo, slope, gamma, tgain, sat, clipw,
+                          shadows, vibrance, nored))
+
+
+def _max3p(x):
+    return np.maximum(np.maximum(x[0], x[1]), x[2])
+
+
+def _min3p(x):
+    return np.minimum(np.minimum(x[0], x[1]), x[2])
+
+
+def _post_p(enc, lo, slope, gamma, tgain, sat, clipw=None, shadows=0.0,
+            vibrance=0.0, nored=None):
+    """Niveaux, gamma, ombres, blancs écrêtés, température, saturation, sur
+    trois plans (modifiés sur place)."""
+    lo, slope = np.float32(lo), np.float32(slope)
+    x = []
+    for c in range(3):
+        v = enc[c] - lo
+        v *= slope
+        np.maximum(v, 0.0, out=v)
+        x.append(v)
     if abs(gamma - 1.0) > 1e-3:
         # Gamma en partie sur la luminance seule : un gamma par canal pâlit
         # les couleurs quand il éclaircit (rapports entre canaux écrasés).
-        xc = np.power(x, gamma)
-        Y = np.maximum(x @ LUMA_E, 1e-5)
-        xl = x * (np.power(Y, gamma) / Y)[..., None]
+        Y = np.maximum(_dot(x, LUMA_E), 1e-5)
+        r = np.power(Y, gamma)
+        r /= Y
         # ... sauf là où le rouge est entièrement reconstruit : le gamma par
         # canal y garde discrète une couleur qui n'existe pas dans l'original.
-        k = GAMMA_CHROMA if nored is None else (GAMMA_CHROMA * (1.0 - nored))[..., None]
-        x = xc + k * (xl - xc)
+        k = np.float32(GAMMA_CHROMA) if nored is None else GAMMA_CHROMA * (1.0 - nored)
+        for c in range(3):
+            xc = np.power(x[c], gamma)
+            xl = x[c] * r
+            xl -= xc
+            xl *= k
+            xc += xl
+            x[c] = xc
     if shadows > 1e-3:
         # Éclaircit les ombres (maximum vers L = 1/3), sans toucher aux blancs
-        L = np.clip(x @ LUMA_E, 1e-4, 1.0)
-        L2 = L + 1.2 * shadows * L * (1.0 - L) ** 2
-        x = x * (L2 / L)[..., None]
+        L = np.clip(_dot(x, LUMA_E), 1e-4, 1.0)
+        r = 1.0 + (1.2 * shadows) * (1.0 - L) ** 2
+        for c in range(3):
+            x[c] *= r
     if clipw is not None and clipw.any():
         # Hautes lumières écrêtées dans l'original : couleur perdue -> blanc
-        m = _max3(x)[..., None]
-        x = x + clipw[..., None] * (m - x)
-    x = x * tgain
+        m = _max3p(x)
+        for c in range(3):
+            x[c] += clipw * (m - x[c])
+    for c in range(3):
+        if tgain[c] != 1.0:
+            x[c] *= tgain[c]
     if abs(sat - 1.0) > 1e-3 or vibrance > 1e-3:
-        y = (x @ LUMA_E)[..., None]
-        k = sat
+        y = _dot(x, LUMA_E)
+        k = np.float32(sat)
         if vibrance > 1e-3:
             # Vibrance : gain fort sur les couleurs ternes, nul sur les vives
-            c = (_max3(x)[..., None] - _min3(x)[..., None]) \
-                / np.maximum(_max3(x)[..., None], 1e-3)
-            k = sat * (1.0 + vibrance * 0.6 * np.clip(1.0 - 2.0 * c, 0.0, 1.0))
-        x = np.maximum(y + k * (x - y), 0.0)
-    return _shadow_guard(x)
+            mx = _max3p(x)
+            ch = (mx - _min3p(x)) / np.maximum(mx, 1e-3)
+            k = sat * (1.0 + (vibrance * 0.6) * np.clip(1.0 - 2.0 * ch, 0.0, 1.0))
+        for c in range(3):
+            x[c] -= y
+            x[c] *= k
+            x[c] += y
+            np.maximum(x[c], 0.0, out=x[c])
+    return _shadow_guard_p(x)
 
 
 # Ombres : le rouge ajouté par la compensation et la balance, sous une lumière
@@ -667,34 +767,48 @@ BLACK_KEEP = 0.35                    # chroma gardée au noir absolu
 def _shadow_guard(x: np.ndarray) -> np.ndarray:
     """Retire le magenta des ombres et la teinte des quasi-noirs, à
     luminance constante."""
-    y = x @ LUMA_E
+    return _stack(_shadow_guard_p(_planes(x)))
+
+
+def _shadow_guard_p(x):
+    """``_shadow_guard`` sur trois plans (modifiés sur place)."""
+    y = _dot(x, LUMA_E)
     w = np.clip((SHADOW_Y1 - y) / (SHADOW_Y1 - SHADOW_Y0), 0.0, 1.0)
-    m = np.maximum(np.minimum(x[..., 0], x[..., 2]) - x[..., 1], 0.0) * w * MAGENTA_K
+    m = np.maximum(np.minimum(x[0], x[2]) - x[1], 0.0)
+    m *= w
+    m *= MAGENTA_K
     if m.any():
-        x = x.copy()
-        x[..., 0] -= m
-        x[..., 2] -= m
-        y2 = np.maximum(x @ LUMA_E, 1e-5)
-        x *= (y / y2)[..., None]
+        x[0] -= m
+        x[2] -= m
+        r = y / np.maximum(_dot(x, LUMA_E), 1e-5)
+        for c in range(3):
+            x[c] *= r
     # Tons presque neutres (sable, roche, épave) à toute luminosité : une
     # légère teinte lavande vient de la balance, pas de la scène.
-    mx, mn = _max3(x), _min3(x)
-    chroma = (mx - mn) / np.maximum(mx, 1e-3)
+    mx = _max3p(x)
+    chroma = (mx - _min3p(x)) / np.maximum(mx, 1e-3)
     wn = np.clip((NEUTRAL_C - chroma) / (0.5 * NEUTRAL_C), 0.0, 1.0)
-    m = np.maximum(np.minimum(x[..., 0], x[..., 2]) - x[..., 1], 0.0) * wn * NEUTRAL_K
+    wn *= NEUTRAL_K
+    m = np.maximum(np.minimum(x[0], x[2]) - x[1], 0.0)
+    m *= wn
     if m.any():
-        x = x.copy()
-        x[..., 0] -= m
-        x[..., 2] -= m
+        x[0] -= m
+        x[2] -= m
         # Rose (rouge au-dessus du vert ET du bleu) : même traitement
-        pk = np.maximum(x[..., 0] - np.maximum(x[..., 1], x[..., 2]), 0.0) \
-            * (x[..., 2] > x[..., 1]) * wn * NEUTRAL_K
-        x[..., 0] -= pk
-        y2 = np.maximum(x @ LUMA_E, 1e-5)
-        x *= (y / y2)[..., None]
+        pk = np.maximum(x[0] - np.maximum(x[1], x[2]), 0.0)
+        pk *= (x[2] > x[1])
+        pk *= wn
+        x[0] -= pk
+        r = y / np.maximum(_dot(x, LUMA_E), 1e-5)
+        for c in range(3):
+            x[c] *= r
     kb = BLACK_KEEP + (1.0 - BLACK_KEEP) * np.clip(y / BLACK_Y, 0.0, 1.0)
-    yy = y[..., None]
-    return np.maximum(yy + kb[..., None] * (x - yy), 0.0)
+    for c in range(3):
+        x[c] -= y
+        x[c] *= kb
+        x[c] += y
+        np.maximum(x[c], 0.0, out=x[c])
+    return x
 
 
 SHOULDER_KNEE = 0.80
@@ -708,21 +822,41 @@ def shoulder(x: np.ndarray, knee: float = SHOULDER_KNEE) -> np.ndarray:
     mis à l'échelle du même facteur.  Les blancs gardent leur modelé au lieu
     d'être coupés net à 255.
     """
-    m = _max3(x)[..., None]
+    return _stack(_shoulder_p(_planes(x), knee))
+
+
+def _shoulder_p(x, knee: float = SHOULDER_KNEE):
+    m = _max3p(x)
     r = 1.0 - knee
     over = np.maximum(m - knee, 0.0)
-    m2 = np.where(m > knee, knee + r * (1.0 - np.exp(-over / r)), m)
-    return np.clip(x * (m2 / np.maximum(m, 1e-6)), 0.0, 1.0)
+    if over.any():
+        # m2 = m sous le genou, knee + r·(1 − e^(−over/r)) au-dessus
+        over /= -r
+        np.exp(over, out=over)
+        m2 = np.minimum(m, knee) + r * (1.0 - over)
+        m2 /= np.maximum(m, 1e-6)
+        for c in range(3):
+            x[c] *= m2
+    for c in range(3):
+        np.clip(x[c], 0.0, 1.0, out=x[c])
+    return x
 
 
 def _clarity(enc: np.ndarray, a: np.ndarray, b: np.ndarray, amount: float
              ) -> np.ndarray:
-    L = np.clip(guide_of(enc), 0.0, 1.0)
-    base = a * L + b
+    return _stack(_clarity_p(_planes(enc), a, b, amount))
+
+
+def _clarity_p(enc, a, b, amount):
+    L = np.clip(_dot(enc, LUMA_E), 0.0, 1.0)
+    base = a * L
+    base += b
     w = 4.0 * L * (1.0 - L)            # tons moyens seulement : ni blancs ni noirs
     L2 = L + amount * w * (L - base)
     ratio = np.clip(L2 / np.maximum(L, 1e-3), 0.5, 2.0)
-    return enc * ratio[..., None]
+    for c in range(3):
+        enc[c] *= ratio
+    return enc
 
 
 # ---------------------------------------------------------------------------
@@ -922,46 +1056,125 @@ def build_plan(img: np.ndarray, settings: Optional[Settings] = None,
 # ---------------------------------------------------------------------------
 
 def _apply_strip(part: np.ndarray, plan: Plan, full_hw: Tuple[int, int],
-                 y0: int, y1: int) -> np.ndarray:
+                 y0: int, y1: int, out: np.ndarray) -> None:
+    """Corrige une bande (lignes y0..y1) et l'écrit dans *out* (même forme)."""
     s = plan.settings
-    enc0 = to_float(part)
-    guide = guide_of(enc0)
-    t = np.clip(upsample_rows(plan.t_ab[0], full_hw, y0, y1) * guide
-                + upsample_rows(plan.t_ab[1], full_hw, y0, y1), 0.0, 1.0)
+    scale = np.float32(1.0 / 255.0 if part.dtype == np.uint8 else
+                       1.0 / 65535.0 if part.dtype == np.uint16 else 1.0)
+    src = _planes(part)
+    if part.dtype in (np.uint8, np.uint16):
+        enc0 = [p.astype(np.float32) * scale for p in src]
+        lin0 = [decode_linear(p) for p in src]
+    else:
+        enc0 = [np.clip(p.astype(np.float32), 0.0, 1.0) for p in src]
+        lin0 = [decode_linear(p) for p in enc0]
+    guide = _dot(enc0, (0.299, 0.587, 0.114))
+    t = upsample_rows(plan.t_ab[0], full_hw, y0, y1)
+    t *= guide
+    t += upsample_rows(plan.t_ab[1], full_hw, y0, y1)
+    np.clip(t, 0.0, 1.0, out=t)
     tc = (t if plan.tcol is None
           else np.clip(upsample_rows(plan.tcol, full_hw, y0, y1), 0.0, 1.0))
     cw = (None if plan.capw is None
           else np.clip(upsample_rows(plan.capw, full_hw, y0, y1), 0.0, 1.0))
-    lin = decode_linear(_compensate(enc0, plan.comp, _near_weight(tc, plan.keep)))
-    rec = _restore(lin, t, plan.water, plan.gains, plan.keep, s, tc, plan.wtone, cw,
-                   no_red_weight(enc0))
-    enc = _post(encode_srgb(rec * plan.pre), plan.lo, plan.slope, plan.gamma,
-                plan.tgain, s.saturation, _clip_weight(enc0),
-                s.shadows, s.vibrance, no_red_weight(enc0))
+    # L'original n'est décodé qu'une fois (signal, zones sans rouge)
+    ratio = lin0[0] / np.maximum(lin0[1] + lin0[2], 1e-4)
+    nored = _smooth01((NORED_R1 - ratio) / (NORED_R1 - NORED_R0))
+    clipw = 0.6 * np.clip((_max3p(enc0) - 0.97) / 0.025, 0.0, 1.0)
+    # Compensation d'Ancuti (voir _compensate)
+    comp = plan.comp
+    if comp[0] > 0 or comp[1] > 0:
+        G = enc0[1] * _near_weight(tc, plan.keep)
+        G *= signal_weight(_dot(lin0, LUMA))
+        e = list(enc0)
+        for c, k in ((0, comp[0]), (2, comp[1])):
+            if k > 0:
+                v = (1.0 - enc0[c]) * k
+                v *= G
+                v += enc0[c]
+                e[c] = np.clip(v, 0.0, 1.0, out=v)
+        lin = list(lin0)
+        for c in (0, 2):
+            if e[c] is not enc0[c]:
+                lin[c] = decode_linear(e[c])
+    else:
+        lin = lin0
+    rec = _restore_p(lin, t, plan.water, plan.gains, plan.keep, s, tc, plan.wtone,
+                     cw, nored)
+    pre = np.float32(plan.pre)
+    for c in range(3):
+        rec[c] *= pre
+        rec[c] = encode_srgb(rec[c])
+    enc = _post_p(rec, plan.lo, plan.slope, plan.gamma, plan.tgain, s.saturation,
+                  clipw, s.shadows, s.vibrance, nored)
     if plan.clarity > 1e-3:
         a = upsample_rows(plan.clar_ab[0], full_hw, y0, y1)
         b = upsample_rows(plan.clar_ab[1], full_hw, y0, y1)
-        enc = _clarity(enc, a, b, plan.clarity)
-    return shoulder(enc)
+        enc = _clarity_p(enc, a, b, plan.clarity)
+    enc = _shoulder_p(enc)
+    q = 65535.0 if out.dtype == np.uint16 else 255.0
+    for c in range(3):
+        v = enc[c]
+        v *= q
+        v += 0.5
+        out[..., c] = v.astype(out.dtype)
+
+
+_POOL = None
+_POOL_LOCK = threading.Lock()
+
+
+def _pool() -> ThreadPoolExecutor:
+    """Fils d'exécution partagés pour les bandes (numpy et OpenCV libèrent le
+    verrou de l'interpréteur pendant les calculs)."""
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            _POOL = ThreadPoolExecutor(max_workers=max(1, min(8, os.cpu_count() or 1)),
+                                       thread_name_prefix="aquimage-strip")
+        return _POOL
 
 
 def apply_plan(img: np.ndarray, plan: Plan, out_dtype=None,
-               progress=None) -> np.ndarray:
+               progress=None, workers: Optional[int] = None) -> np.ndarray:
     """Applique *plan* à *img* (RGB encodé, toute résolution).
 
     Retourne une image du même type que l'entrée (ou *out_dtype*).
-    *progress(fraction)* est appelé après chaque bande.
+    *progress(fraction)* est appelé après chaque bande.  Les bandes sont
+    traitées en parallèle (*workers* = 1 pour un traitement séquentiel) ; le
+    résultat est identique dans les deux cas.
     """
     if out_dtype is None:
         out_dtype = img.dtype if img.dtype in (np.uint8, np.uint16) else np.uint8
     H, W = img.shape[:2]
     out = np.empty((H, W, 3), out_dtype)
-    for y0 in range(0, H, STRIP_ROWS):
-        y1 = min(H, y0 + STRIP_ROWS)
-        out[y0:y1] = quantize(_apply_strip(img[y0:y1], plan, (H, W), y0, y1),
-                              out_dtype)
+    spans = [(y0, min(H, y0 + STRIP_ROWS)) for y0 in range(0, H, STRIP_ROWS)]
+
+    def work(span):
+        y0, y1 = span
+        _apply_strip(img[y0:y1], plan, (H, W), y0, y1, out[y0:y1])
+        return y1
+
+    if workers is None:
+        workers = MAX_WORKERS
+    if workers <= 1 or len(spans) < 3 or threading.current_thread().name.startswith(
+            "aquimage-strip"):
+        for sp in spans:
+            y1 = work(sp)
+            if progress:
+                progress(y1 / H)
+        return out
+    done = 0
+    sem = threading.Semaphore(workers)       # au plus *workers* bandes à la fois
+
+    def guarded(span):
+        with sem:
+            return work(span)
+
+    for _ in _pool().map(guarded, spans):
+        done += 1
         if progress:
-            progress(y1 / H)
+            progress(done / len(spans))
     return out
 
 
