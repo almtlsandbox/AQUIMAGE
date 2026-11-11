@@ -30,7 +30,36 @@ def _clip(x, lo, hi):
 OPEN_WATER_FINE = 0.006      # texture fine en dessous de laquelle c'est de la pleine eau
 
 _SCENE_CODES = {"contre-jour": "backlit", "pleine eau": "openwater",
-                "anti-violet": "antiviolet"}
+                "anti-violet": "antiviolet", "hors de l'eau": "air"}
+
+# Réglages selon le déficit de rouge d, par interpolation : pas de saut d'un
+# rendu à l'autre entre deux photos presque identiques.
+#            d :   -0.36  -0.24   0.02   0.09   0.16   0.24
+_D_KNOTS = [-0.36, -0.24, 0.02, 0.09, 0.16, 0.24]
+_COLOR = [0.70, 0.30, 0.30, 0.75, 0.75, 1.00]
+_RED_COMP = [0.00, 0.00, 0.00, 0.50, 0.50, 1.00]
+_BALANCED = [0.00, 1.00, 1.00, 0.00, 0.00, 0.00]     # « déjà équilibrée »
+
+
+def _lerp(a: float, b: float, w: float) -> float:
+    return a + (b - a) * w
+
+
+def air_evidence(ev: dict, d: float) -> Tuple[float, float]:
+    """(rééquilibrée, intacte), chacun de 0 à 1.
+
+    *rééquilibrée* : le rouge est présent et de grandes zones bleues en
+    gardent — ciel, mer vue du pont, ou eau déjà corrigée par l'appareil :
+    la photo est traitée comme « déjà équilibrée », pas comme sous-marine.
+    *intacte* : photo chaude dont les hautes lumières sont neutres (intérieur)
+    ou coucher de soleil : rien à corriger.
+    """
+    shift = core.ramp(ev["red_p90"], 0.85, 1.0) * core.ramp(ev["sky"], 0.10, 0.20)
+    lr, lb = abs(np.log(max(ev["hl_rg"], 1e-3))), abs(np.log(max(ev["hl_bg"], 1e-3)))
+    neutral_hl = (1.0 - core.ramp(lr, 0.12, 0.20)) * (1.0 - core.ramp(lb, 0.15, 0.25))
+    sunset = core.ramp(ev["hl_rg"], 2.2, 2.6) * (1.0 - core.ramp(ev["hl_bg"], 0.40, 0.50))
+    intact = max(neutral_hl, sunset) * (1.0 - core.ramp(d, -0.36, -0.24))
+    return float(shift), float(intact)
 
 
 def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
@@ -52,51 +81,72 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
     # Texture fine (sans le dégradé de lumière de la surface vers le fond) :
     # une pleine eau en dégradé a un écart-type élevé mais aucun détail.
     fine = float((luma - cv2.GaussianBlur(luma, (0, 0), 0.05 * min(luma.shape))).std())
+    ev = core.scene_evidence(enc0)
+    shift, intact = air_evidence(ev, d)
 
     s = base.copy()
-    # 1. Nature de la dominante
-    if d >= 0.2:
+    # 1. Nature de la dominante.  Du rouge présent et du ciel : le déficit de
+    # rouge moyen vient du bleu du ciel ou de la mer, pas d'une dominante.
+    de = d * (1.0 - shift) if d > 0 else d
+    s.color = float(np.interp(de, _D_KNOTS, _COLOR))
+    s.red_comp = float(np.interp(de, _D_KNOTS, _RED_COMP))
+    balanced = float(np.interp(de, _D_KNOTS, _BALANCED))
+    if de >= 0.2:
         kind, code = "sous-marine", "underwater"
-        s.red_comp, s.color = 1.0, 1.0
-    elif d > 0.05:
+    elif de > 0.05:
         kind, code = "dominante légère", "light"
-        s.red_comp, s.color = 0.5, 0.75
-    elif d > -0.3:
+    elif de > -0.3:
         kind, code = "déjà équilibrée (flash ou correction appareil)", "balanced"
-        s.red_comp, s.color = 0.0, 0.3
     else:
         kind, code = "dominante rouge (filtre)", "red"
-        s.red_comp, s.color = 0.0, 0.7
 
     # 2. Bruit : plancher de transmission et dose de retrait du voile
     excess = max(0.0, noise - 0.008)
     s.t_min = _clip(0.2 + 10.0 * excess, 0.2, 0.35)
     s.strength = _clip(0.6 - 12.0 * excess, 0.4, 0.6)
-    if kind.startswith("déjà"):
-        s.strength = min(s.strength, 0.4)
+    s.strength = min(s.strength, _lerp(0.6, 0.4, balanced))
+    if shift > 0:
+        s.strength = min(s.strength, _lerp(0.6, 0.25, shift))
 
-    # 3. Situations particulières
+    # 3. Situations particulières (dosées, sans seuil net)
     scene = []
-    if bright > 0.08:
-        # Contre-jour vers la surface : préserver le ciel, déboucher le sujet
+    backlit = core.ramp(bright, 0.07, 0.09)
+    if backlit > 0.5:
         scene.append("contre-jour")
-        s.strength = min(s.strength, 0.45)
-        s.shadows = _clip(0.25 + 1.5 * bright, 0.3, 0.6)
-    else:
-        # Ombres débouchées seulement si l'original en a besoin
-        s.shadows = s.shadows * (1.0 - core.tonal_fullness(enc0))
-    if texture < 0.07 or fine < OPEN_WATER_FINE:
-        # Pleine eau sans sujet : ne pas étirer le bruit ni le vignetage
-        scene.append("pleine eau")
+    # Contre-jour vers la surface : préserver le ciel, déboucher le sujet ;
+    # sinon, ombres débouchées seulement si l'original en a besoin.
+    s.strength = min(s.strength, _lerp(0.6, 0.45, backlit))
+    s.shadows = _lerp(s.shadows * (1.0 - core.tonal_fullness(enc0)),
+                      _clip(0.25 + 1.5 * bright, 0.3, 0.6), backlit)
+    openw = max(1.0 - core.ramp(texture, 0.07, 0.078),
+                1.0 - core.ramp(fine, OPEN_WATER_FINE, OPEN_WATER_FINE + 0.0008))
+    if openw > 0:
+        # Pleine eau sans sujet : ne pas étirer le bruit ni le vignetage.
         # Ni étirement, ni vibrance : sinon bleu électrique et bruit doublé
-        s.stretch, s.strength, s.color = 1.0, 0.2, min(s.color, 0.5)
-        s.vibrance, s.saturation, s.shadows = 0.0, min(s.saturation, 0.95), 0.0
+        if openw > 0.5:
+            scene.append("pleine eau")
+        s.stretch = _lerp(s.stretch, 1.0, openw)
+        s.strength = _lerp(s.strength, 0.2, openw)
+        s.color = _lerp(s.color, min(s.color, 0.5), openw)
+        s.vibrance = _lerp(s.vibrance, 0.0, openw)
+        s.saturation = _lerp(s.saturation, min(s.saturation, 0.95), openw)
+        s.shadows = _lerp(s.shadows, 0.0, openw)
+    if intact > 0:
+        # Hors de l'eau, lumière chaude voulue : on ne touche presque à rien
+        if intact > 0.5:
+            scene.append("hors de l'eau")
+        for k, v in (("color", 0.0), ("red_comp", 0.0), ("strength", 0.0),
+                     ("shadows", 0.0), ("vibrance", 0.0), ("stretch", 1.0),
+                     ("black_level", 0.0), ("auto_tone", 0.0)):
+            setattr(s, k, _lerp(getattr(s, k), v, intact))
+    elif shift > 0.5:
+        scene.append("hors de l'eau")
 
     # 4. Part de teinte gardée dans l'eau lointaine (plan préliminaire)
     pre = core.build_plan(img, s, small=small)
     keep = pre.stats["auto_keep"]
-    if kind.startswith("déjà") and keep > 0:
-        keep = max(keep, 0.7)
+    if keep > 0:
+        keep = max(keep, 0.7 * balanced)
     s.water_keep = keep
 
     # 5. Garde-fou : ombres violettes (rouge trop poussé dans l'eau bleue)
@@ -118,8 +168,8 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
     # 6. Clarté selon le contraste obtenu (plus douce si déjà contrasté)
     std = float(core.guide_of(core.to_float(out)).std())
     s.contrast = _clip(0.35 - 1.5 * (std - 0.15), 0.08, 0.35)
-    if "pleine eau" in scene:
-        s.contrast = 0.08
+    s.contrast = _lerp(s.contrast, 0.08, openw)
+    s.contrast = _lerp(s.contrast, 0.0, intact)
     s.clamp()
 
     diag = {
@@ -132,6 +182,9 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
         "bright": round(bright, 3),
         "luma_std": round(std, 3),
         "water_keep": round(keep, 3),
+        "red_p90": round(ev["red_p90"], 3),
+        "sky": round(ev["sky"], 3),
+        "air": round(max(shift, intact), 3),
     }
     return s, diag
 
