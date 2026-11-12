@@ -160,7 +160,7 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .sl .row span:first-child { cursor: default; }
 .sl .row output { color: var(--text); }
 .sl.changed .row span:first-child { color: var(--text); }
-.sl.changed .row span:first-child::after { content: " (modifié)"; color: var(--muted); font-size: 11.5px; }
+.sl.changed .row span:first-child::after { content: " (" var(--changed-label, "modifié") ")"; color: var(--muted); font-size: 11.5px; }
 .export { padding: 14px 18px 18px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
 .export > label { color: var(--muted); font-size: 13px; }
 

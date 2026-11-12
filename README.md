@@ -62,6 +62,8 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - **Reprise :** les fichiers déjà corrigés sont ignorés, ce qui permet de relancer un lot interrompu. Cochez « Refaire » pour les recalculer.
 - **Doublons :** les copies identiques (« X 2.JPG », « X 2.MOV ») sont ignorées et notées dans le rapport.
 - **Ajustements communs :** ils s'ajoutent aux réglages automatiques de chaque fichier, par exemple un peu plus chaud pour toute une plongée.
+- **Réglages de l'atelier respectés :** une photo ou une vidéo réglée à la main dans l'atelier (curseurs, rotation, recadrage, découpe, stabilisation) est traitée avec ces réglages-là. Décochez l'option pour tout refaire en automatique.
+- **Séries harmonisées :** des photos de la même scène prises à quelques secondes d'intervalle reçoivent des réglages voisins, pour qu'une rafale ne change pas de rendu d'une image à l'autre.
 - **Réglages identiques pour tous :** cette option reprend les réglages faits dans l'atelier sur une photo. Le recadrage et la rotation, eux, restent propres à chaque photo.
 - **Rapport :** `aquimage_rapport.csv`, écrit au fil du traitement, contient pour chaque fichier le type d'image détecté, les réglages, la durée et les erreurs. Il s'ouvre dans Excel.
 - **Filtres :** la liste se filtre par état (à traiter, corrigés, ignorés, erreurs) et par type (photos ou vidéos).
@@ -74,6 +76,9 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - **Comparaison :** faites glisser le séparateur orange entre l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
 - **Navigation :** la molette zoome, le glisser déplace l'image, le double-clic l'ajuste à la fenêtre.
 - **Curseurs :** ils partent des valeurs automatiques. Un double-clic sur un nom de curseur le ramène à sa valeur automatique.
+- **Réglages conservés :** ce que vous modifiez est enregistré aussitôt pour ce fichier, dans `aquimage_reglages.json`, à côté des originaux (qui ne sont pas touchés). Vous le retrouvez en rouvrant la photo, et le lot en tient compte. Les fichiers concernés portent un crayon ✎. « Revenir aux réglages auto » efface ces réglages.
+- **Annuler, rétablir :** boutons ↶ ↷ ou **Ctrl+Z** et **Ctrl+Y**, pour les curseurs comme pour la rotation, le recadrage et la découpe.
+- **Copier, coller les réglages :** boutons ou **Ctrl+C** et **Ctrl+V**, pour reporter les réglages de couleur d'une photo sur une autre.
 - **Aperçu fidèle :** les réglages ne dépendent pas de la résolution ; l'aperçu et l'export pleine résolution diffèrent d'environ 1 niveau sur 255.
 - **Enregistrer** produit le fichier en pleine résolution ; **Exporter la vidéo** traite le clip entier. **Ouvrir le dossier** affiche ensuite le fichier dans l'Explorateur.
 
@@ -85,6 +90,7 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 | Température, Teinte | Réglages créatifs, du froid au chaud et du vert au magenta |
 | Retrait du voile | Enlève la brume de l'eau et rend du contraste aux sujets lointains |
 | Protection contre le bruit au loin | Limite l'amplification du bruit dans les zones très voilées |
+| Réduction du bruit | Lisse le grain et le bruit de couleur dans l'eau, les zones lisses et les ombres, sans toucher aux contours |
 | Luminosité | Plus clair ou plus sombre (tons moyens) |
 | Éclaircir les ombres | Débouche les sujets sombres, utile en contre-jour |
 | Contraste local | Clarté des détails, appliquée aux tons moyens seulement |
@@ -118,7 +124,7 @@ Rotation, recadrage, découpe et stabilisation sont mémorisés pour la photo ou
   - la trajectoire est lissée sur 0,5 à 2 secondes, selon la force choisie ;
   - sur une vidéo test secouée, le tremblé passe de 10,5 pixels à 0,06 pixel par image.
 - **Encodage :** H.264 (CRF 21, débit plafonné à celui de la source), avec le son d'origine converti en AAC et la date de prise de vue. La sortie est toujours en `.mp4`.
-- **Vitesse :** sur la machine de test (2 cœurs), un clip 1080p à 30 i/s se traite à environ 4 images par seconde. La stabilisation ajoute environ un quart de temps. Un ordinateur à 8 cœurs ira nettement plus vite.
+- **Vitesse :** sur la machine de test (2 cœurs), un clip 1080p à 30 i/s se traite à environ 4 images par seconde (2 avant la 1.10). La stabilisation ajoute environ un quart de temps. Un ordinateur à 8 cœurs ira nettement plus vite.
 
 ## Raccourcis clavier
 
@@ -132,6 +138,8 @@ Dans l'atelier :
 | C | Recadrer (afficher ou masquer le cadre) |
 | Entrée, Échap | Terminer le recadrage |
 | Molette, double-clic | Zoom, ajuster à la fenêtre |
+| Ctrl+Z / Ctrl+Y | Annuler / rétablir la dernière modification |
+| Ctrl+C / Ctrl+V | Copier / coller les réglages de couleur |
 
 ## Formats
 
@@ -192,17 +200,57 @@ Ce que l'auto-réglage détecte, image par image :
 | Pleine eau sans sujet, même en dégradé de lumière | Pas d'étirement ni de vibrance, l'eau reste azur |
 | Ombres virant au violet | Balance des blancs réduite automatiquement |
 | Photo déjà bien exposée | Ni éclaircissement marqué, ni ombres débouchées |
+| Ciel, ou rouge bien présent malgré une moyenne bleue | Traitée comme déjà équilibrée : correction douce |
+| Photo chaude aux blancs neutres (intérieur, bateau le soir) | Laissée presque intacte (« hors de l'eau ») |
+| Sable ou roche rosis ou jaunis par le mode plongée de l'appareil | Dominante retirée, zone par zone |
 
-Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté.
+Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règle la clarté. Depuis la 1.10, ces décisions sont progressives : deux photos presque identiques ne basculent plus d'un rendu à l'autre.
 
 **Validation :** ces règles ont été calibrées sur 35 photos réelles et sur 24 scènes simulées dont on connaît la vraie couleur. Elles ont ensuite été vérifiées sur 1 045 photos d'un voyage en mer Rouge (SeaLife DC2000) et sur une sélection de 131 favoris. Les chiffres de chaque version sont dans l'historique.
 
 **Limites connues :**
-- **Dominantes déjà poussées :** les photos déjà roses (mode plongée de l'appareil trop poussé) ou jaunes au flash gardent une partie de leur dominante. Les curseurs Teinte et Température la corrigent.
-- **Épaves en eau verte très voilée :** elles peuvent garder une petite tache verte ou rosée (DSCI1731, 1803).
-- **Photos hors de l'eau :** elles ne sont pas encore reconnues, et reçoivent une correction sous-marine.
+- **Dominantes déjà poussées :** le rose et le jaune sont retirés du sable et de la roche, mais un récif entièrement rosi par le mode plongée de l'appareil garde une partie de sa dominante. Les curseurs Teinte et Température la corrigent.
+- **Épaves en eau verte très voilée :** elles peuvent garder une tache verte ou violette (DSCI1731, 1803).
+- **Photos hors de l'eau :** un paysage avec du ciel reçoit une correction douce, pas toujours nulle. Un coucher de soleil ressemble à une photo prise avec un filtre rouge et est corrigé comme elle : mieux vaut ne pas passer ces photos dans le lot.
+- **Bruit :** la réduction du bruit reste modeste, elle n'efface pas le grain d'une photo très voilée.
 
 ## Historique
+
+### 1.10.0
+
+**Atelier**
+- **Réglages conservés par photo :** curseurs, rotation, recadrage, découpe et stabilisation sont enregistrés pour chaque fichier (`aquimage_reglages.json`, à côté des originaux) et retrouvés à la réouverture. Le lot les respecte.
+- **Annuler et rétablir** (Ctrl+Z, Ctrl+Y), **copier et coller les réglages** (Ctrl+C, Ctrl+V).
+- **Nouveau curseur :** Réduction du bruit.
+
+**Vitesse**
+- **Photos :** une photo de 20 Mpx se corrige en 1,8 s au lieu de 9,1 s sur la machine de test (2 cœurs) : bandes traitées en parallèle, calculs par plan de couleur, plus rien de calculé deux fois. Le résultat est le même, à 1 niveau sur 255 près sur moins de 0,01 % des pixels.
+- **Vidéos :** environ 4 images par seconde au lieu de 2 en 1080p.
+
+**Correction**
+- **Décisions progressives :** les seuils nets (pleine eau, contre-jour, type de dominante, eau libre) sont devenus des transitions.
+- **Séries harmonisées :** les photos d'une même scène prises à moins de 8 secondes reçoivent des réglages voisins. Sur le voyage test, 402 photos sur 1 045 sont dans une série.
+- **Sable et roche rosis ou jaunis :** la dominante laissée par le mode plongée de l'appareil est retirée zone par zone.
+- **Photos hors de l'eau :** un ciel, ou du rouge bien présent, font traiter la photo comme déjà équilibrée ; une photo chaude aux blancs neutres est laissée presque intacte.
+- **Réduction du bruit :** grain et bruit de couleur lissés dans l'eau, les zones lisses et les ombres, selon ce que la correction a amplifié. L'effet reste modeste.
+
+Mesure sur les 1 045 photos du voyage test, copies réduites :
+
+| Nombre de photos | 1.9.1 | 1.10 | Original |
+| --- | --- | --- | --- |
+| Tons clairs roses sur plus de 10 % de l'image | 7 | 2 | 18 |
+| Pourpre sur plus de 2 % de l'image | 31 | 26 | 78 |
+| Éclaircies de plus de 10 points | 82 | 67 | — |
+| Assombries de plus de 10 points | 7 | 8 | — |
+| Paires d'une même série au rendu de couleur différent | 36 | 25 | — |
+| Tons clairs jaunes sur plus de 10 % de l'image | 47 | 53 | 28 |
+| Bruit doublé ou plus (à cette échelle, la réduction du bruit ne se voit pas) | 100 | 109 | — |
+| Blancs écrêtés (plus de 1 %) | 0 | 0 | 208 |
+
+Pas d'amélioration sur les tons jaunes ni sur les épaves en eau verte (DSCI1731, 1803), qui restent dans les limites connues.
+
+**Développement**
+- **Banc sur vraies photos :** 32 photos réduites dans `tests/photos`, avec leurs mesures de référence. `pytest` signale toute dérive ; `python tests/photo_bench.py` montre les écarts et `--update` enregistre la nouvelle référence.
 
 ### 1.9.1
 
@@ -379,6 +427,8 @@ aquimage/
   fileio.py     lecture et écriture (EXIF, ICC, 16 bits, chemins Unicode)
   video.py      vidéos (réglages par clip, découpe, stabilisation, recadrage, ffmpeg + son)
   batch.py      traitement par lot et rapport CSV
+  series.py     cohérence des séries (photos prises à quelques secondes d'intervalle)
+  sidecar.py    réglages conservés par fichier (aquimage_reglages.json)
   server.py     serveur local et API (bibliothèque standard seulement)
   web/          interface (HTML, CSS, JavaScript sans dépendance ; i18n.js : 4 langues)
 bench/          banc d'essai à vérité terrain

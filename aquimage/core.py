@@ -1055,6 +1055,10 @@ class Plan:
         return d
 
 
+SKY_BG = 5.0     # bleu/vert (linéaire) maximal d'un ciel ; l'eau bleue est bien plus saturée
+SKY_Y = 0.15      # luminance linéaire minimale d'un ciel (l'eau bleue profonde est plus sombre)
+
+
 def scene_evidence(enc0: np.ndarray) -> dict:
     """Indices sur la lumière de la scène (copie réduite, valeurs encodées).
 
@@ -1062,7 +1066,7 @@ def scene_evidence(enc0: np.ndarray) -> dict:
       des pixels éclairés.  Sous l'eau en lumière naturelle il reste bien
       sous 1 : le rouge manque partout.  S'il atteint 1, le rouge est là.
     - ``sky`` : part de zones lisses, bleues, mais gardant du rouge
-      (R/V de 0,35 à 0,95) : un ciel, une mer vue du pont — ou une eau déjà
+      (R/V de 0,35 à 0,95) et claires : un ciel — ou une eau déjà
       rééquilibrée par l'appareil.  L'eau bleue brute n'a presque plus de rouge.
     - ``hl_rg``, ``hl_bg`` : teinte des hautes lumières non écrêtées.
     """
@@ -1073,7 +1077,8 @@ def scene_evidence(enc0: np.ndarray) -> dict:
     lit = (mx < 0.97) & (y > 0.03)
     rg = R / np.maximum(G, 1e-4)
     smooth = fine_texture(guide_of(enc0)) < 0.03
-    sky = float((lit & smooth & (B > G) & (rg >= 0.35) & (rg <= 0.95) & (y > 0.08)).mean())
+    sky = float((lit & smooth & (B > G) & (rg >= 0.35) & (rg <= 0.95) & (y > SKY_Y)
+                 & (B < SKY_BG * G)).mean())
     red_p90 = float(np.percentile(rg[lit], 90)) if lit.sum() > 50 else 0.0
     ok = mx < 0.97
     hl_rg = hl_bg = 1.0
@@ -1119,10 +1124,10 @@ def _wb_gains(lin: np.ndarray, s: Settings,
 # teinte rose ou jaune après la balance, c'est une dominante.  Zone morte :
 # un sable est naturellement un peu chaud, on ne le rend pas gris.
 CAST_SAT = 0.24                       # saturation maximale d'une surface « presque neutre »
-CAST_R = (-0.06, 0.10)                # ln(R/V) toléré
+CAST_R = (-0.06, 0.05)                # ln(R/V) toléré
 CAST_B = (-0.22, 0.06)                # ln(B/V) toléré
-CAST_K = 0.7                          # part de l'excès retirée
-CAST_MAX = 0.20                       # correction maximale (en ln)
+CAST_K = 0.9                          # part de l'excès retirée
+CAST_MAX = 0.35                       # correction maximale (en ln)
 CAST_DENSITY = (0.03, 0.12)           # densité locale de surfaces neutres (rien … pleine dose)
 CAST_SIGMA = 0.12                     # étendue du voisinage (part du petit côté)
 

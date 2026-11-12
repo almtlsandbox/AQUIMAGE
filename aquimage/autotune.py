@@ -51,14 +51,15 @@ def air_evidence(ev: dict, d: float) -> Tuple[float, float]:
     *rééquilibrée* : le rouge est présent et de grandes zones bleues en
     gardent — ciel, mer vue du pont, ou eau déjà corrigée par l'appareil :
     la photo est traitée comme « déjà équilibrée », pas comme sous-marine.
-    *intacte* : photo chaude dont les hautes lumières sont neutres (intérieur)
-    ou coucher de soleil : rien à corriger.
+    *intacte* : photo chaude dont les hautes lumières sont neutres
+    (intérieur, lumière du soir) : rien à corriger.
     """
     shift = core.ramp(ev["red_p90"], 0.85, 1.0) * core.ramp(ev["sky"], 0.10, 0.20)
     lr, lb = abs(np.log(max(ev["hl_rg"], 1e-3))), abs(np.log(max(ev["hl_bg"], 1e-3)))
     neutral_hl = (1.0 - core.ramp(lr, 0.12, 0.20)) * (1.0 - core.ramp(lb, 0.15, 0.25))
-    sunset = core.ramp(ev["hl_rg"], 2.2, 2.6) * (1.0 - core.ramp(ev["hl_bg"], 0.40, 0.50))
-    intact = max(neutral_hl, sunset) * (1.0 - core.ramp(d, -0.36, -0.24))
+    # (Un coucher de soleil ne se distingue pas d'une photo prise sous l'eau
+    # avec un filtre rouge : il est traité comme elle.)
+    intact = neutral_hl * (1.0 - core.ramp(d, -0.36, -0.24))
     return float(shift), float(intact)
 
 
@@ -118,8 +119,8 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
     s.strength = min(s.strength, _lerp(0.6, 0.45, backlit))
     s.shadows = _lerp(s.shadows * (1.0 - core.tonal_fullness(enc0)),
                       _clip(0.25 + 1.5 * bright, 0.3, 0.6), backlit)
-    openw = max(1.0 - core.ramp(texture, 0.07, 0.078),
-                1.0 - core.ramp(fine, OPEN_WATER_FINE, OPEN_WATER_FINE + 0.0008))
+    openw = max(1.0 - core.ramp(texture, 0.068, 0.072),
+                1.0 - core.ramp(fine, OPEN_WATER_FINE, OPEN_WATER_FINE + 0.0015))
     if openw > 0:
         # Pleine eau sans sujet : ne pas étirer le bruit ni le vignetage.
         # Ni étirement, ni vibrance : sinon bleu électrique et bruit doublé
@@ -139,8 +140,6 @@ def auto_settings(img: np.ndarray, base: Optional[Settings] = None,
                      ("shadows", 0.0), ("vibrance", 0.0), ("stretch", 1.0),
                      ("black_level", 0.0), ("auto_tone", 0.0)):
             setattr(s, k, _lerp(getattr(s, k), v, intact))
-    elif shift > 0.5:
-        scene.append("hors de l'eau")
 
     # 4. Part de teinte gardée dans l'eau lointaine (plan préliminaire)
     pre = core.build_plan(img, s, small=small)
