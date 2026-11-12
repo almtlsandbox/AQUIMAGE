@@ -42,6 +42,8 @@
       <label><input type="checkbox" id="recursive" checked> <span data-i18n="lot.recursive">Inclure les sous-dossiers</span></label>
       <label><input type="checkbox" id="videos" checked> <span data-i18n="lot.videos">Corriger aussi les vidéos</span></label>
       <label><input type="checkbox" id="dedupe" checked> <span data-i18n="lot.dedupe">Ignorer les doublons (copies « X 2.JPG »)</span></label>
+      <label><input type="checkbox" id="use-saved" checked> <span data-i18n="lot.use_saved">Respecter les réglages faits dans l'atelier</span></label>
+      <label><input type="checkbox" id="series" checked> <span data-i18n="lot.series">Harmoniser les photos d'une même série</span></label>
       <label><input type="checkbox" id="overwrite"> <span data-i18n="lot.overwrite">Refaire les fichiers déjà corrigés</span></label>
     </fieldset>
 
@@ -169,6 +171,14 @@
       <h2 id="p-name" data-i18n="p.none">Aucune image</h2>
       <p class="hint" id="p-diag"></p>
       <button type="button" class="btn" id="btn-auto" disabled data-i18n="p.auto">Revenir aux réglages auto</button>
+      <div class="tool-row">
+        <button type="button" class="btn small icon" id="btn-undo" disabled data-i18n-title="p.undo" data-i18n-aria="p.undo">↶</button>
+        <button type="button" class="btn small icon" id="btn-redo" disabled data-i18n-title="p.redo" data-i18n-aria="p.redo">↷</button>
+        <span class="grow"></span>
+        <button type="button" class="btn small" id="btn-copy" disabled data-i18n="p.copy" data-i18n-title="p.copy_title">Copier</button>
+        <button type="button" class="btn small" id="btn-paste" disabled data-i18n="p.paste" data-i18n-title="p.paste_title">Coller</button>
+      </div>
+      <p class="hint" id="p-kept" role="status"></p>
     </div>
     <div class="sliders" id="sliders">
       <div class="group edit" id="edit">

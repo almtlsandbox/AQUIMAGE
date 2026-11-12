@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import __version__, autotune, core, fileio, video
+from . import __version__, autotune, core, fileio, series, sidecar, video
 from .batch import BatchJob, BatchOptions
 from .core import Settings
 
@@ -56,13 +56,42 @@ class Session:
             self.info = {"width": int(self.full.shape[1]),
                          "height": int(self.full.shape[0]),
                          "bits": self.meta.bits}
-            self.settings, self.diag = autotune.auto_settings(self.full)
-            self._set_frame(self.full)
+            # Analyse sur la copie réduite du fichier, série comprise : les
+            # mêmes réglages que le traitement par lot.
+            self.settings, self.diag = series.auto_for(path)
         else:
             self.info = video.probe(path)
             self.settings, self.diag = video.video_settings(path)
+        self.auto = self.settings.copy()
+        # Réglages conservés d'une séance précédente
+        entry = sidecar.get(path)
+        self.saved = entry is not None
+        if entry:
+            if entry.get("settings"):
+                self.settings = Settings.from_dict(entry["settings"])
+            self.rot = int(entry.get("rot", 0)) % 4
+            self.crop = entry.get("crop") or None
+            if self.kind == "video":
+                self.trim = list(entry.get("trim") or [0.0, 1.0])
+                self.stab = float(entry.get("stab", 0.0))
+        if self.kind == "image":
+            self._set_frame(self.full)
+        else:
             self.set_pos(0.5)
         self.lock = threading.Lock()
+
+    def keep(self, settings: Optional[dict]) -> bool:
+        """Enregistre l'état de l'atelier pour ce fichier."""
+        if settings:
+            self.settings = Settings.from_dict(settings)
+        ok = sidecar.put(self.path, self.settings.to_dict() if settings else None,
+                         self.rot, self.crop, self.trim, self.stab)
+        self.saved = ok
+        return ok
+
+    def forget(self) -> None:
+        sidecar.remove(self.path)
+        self.saved = False
 
     def _set_frame(self, img: np.ndarray) -> None:
         # Copies réduites non pivotées : la rotation se refait sans relire
@@ -118,7 +147,8 @@ class Session:
         return {"id": self.id, "path": self.path, "name": os.path.basename(self.path),
                 "kind": self.kind, "info": self.info, "pos": self.pos, "rot": self.rot,
                 "crop": self.crop, "trim": self.trim, "stab": self.stab,
-                "settings": self.settings.to_dict(), "diag": self.diag}
+                "settings": self.settings.to_dict(), "diag": self.diag,
+                "auto": self.auto.to_dict(), "saved": self.saved}
 
 
 class App:
@@ -247,6 +277,7 @@ def list_media(path: str, dst: str = "") -> list:
     du même nom existe déjà dans *dst* (dossier de l'atelier)."""
     path = os.path.abspath(path)
     done = _output_stems(dst) if dst and os.path.abspath(dst) != path else set()
+    kept = sidecar.names(path)
     out = []
     for e in sorted(os.scandir(path), key=lambda e: e.name.lower()):
         if e.is_file() and not e.name.startswith("."):
@@ -254,7 +285,8 @@ def list_media(path: str, dst: str = "") -> list:
                     else "video" if fileio.is_video(e.name) else None)
             if kind:
                 out.append({"name": e.name, "path": e.path, "kind": kind,
-                            "done": os.path.splitext(e.name)[0].lower() in done})
+                            "done": os.path.splitext(e.name)[0].lower() in done,
+                            "kept": e.name in kept})
     return out
 
 
@@ -464,9 +496,23 @@ class Handler(BaseHTTPRequestHandler):
                     if sess.kind == "video":
                         s, d = video.video_settings(sess.path, base)
                     else:
-                        s, d = autotune.auto_settings(sess.full, base)
+                        s, d = series.auto_for(sess.path)
+                        # Les réglages créatifs en cours sont conservés
+                        s = s.copy(temperature=base.temperature, tint=base.tint,
+                                   exposure=base.exposure)
                 sess.settings, sess.diag = s, d
+                sess.auto = s.copy()
                 return self._json(sess.describe())
+            if u.path == "/api/keep":
+                sess = APP.get(b["id"])
+                with sess.lock:
+                    ok = sess.keep(b.get("settings"))
+                return self._json({"saved": ok})
+            if u.path == "/api/forget":
+                sess = APP.get(b["id"])
+                with sess.lock:
+                    sess.forget()
+                return self._json({"saved": False})
             if u.path == "/api/save":
                 sess = APP.get(b["id"])
                 dest = b.get("dest") or os.path.join(os.path.dirname(sess.path), "AquImage")
@@ -498,7 +544,9 @@ class Handler(BaseHTTPRequestHandler):
                     quality=int(b.get("quality", 92)),
                     overwrite=bool(b.get("overwrite", False)),
                     suffix=b.get("suffix", ""), workers=int(b.get("workers", 0)),
-                    dedupe=bool(b.get("dedupe", True)))
+                    dedupe=bool(b.get("dedupe", True)),
+                    use_saved=bool(b.get("use_saved", True)),
+                    series=bool(b.get("series", True)))
                 job = BatchJob(opts)
                 if not job.items:
                     raise ValueError("Aucune image ni vidéo dans le dossier source.")

@@ -236,3 +236,9 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .viewer.cropping { cursor: crosshair; }
 .viewer.cropping .split, .viewer.cropping .tag { display: none; }
 .brand .ver { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Annuler / rétablir, copier / coller les réglages */
+.tool-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.tool-row .grow { flex: 1; }
+#p-kept { min-height: 1.2em; margin: 6px 0 0; }
+.thumbs .kept { position: absolute; left: 6px; bottom: 6px; background: rgba(0,0,0,.65); color: var(--buoy); font-size: 11px; padding: 1px 6px; border-radius: 3px; }

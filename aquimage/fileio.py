@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from . import __version__
+from . import __version__, core
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mts", ".m2ts", ".3gp"}
@@ -187,6 +187,23 @@ def jpeg_bytes(rgb: np.ndarray, quality: int = 88) -> bytes:
     ok, buf = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
                            [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
     return buf.tobytes()
+
+
+def read_analysis(path: str, max_side: int = 1600) -> np.ndarray:
+    """Copie réduite (RGB 8 bits, orientée) pour l'analyse automatique : un
+    JPEG est décodé directement en petit, bien plus vite que l'image entière."""
+    try:
+        with Image.open(path) as im:
+            if im.format == "JPEG":
+                im.draft("RGB", (max_side, max_side))
+            arr = np.asarray(ImageOps.exif_transpose(im).convert("RGB"))
+        # Même réduction (moyenne de surface) que pour une image entière :
+        # l'estimation du bruit reste comparable.
+        return np.ascontiguousarray(core.resize_max(arr, max_side))
+    except Exception:
+        img, _ = read_image(path)
+        img = core.resize_max(img, max_side)
+        return (img >> 8).astype(np.uint8) if img.dtype == np.uint16 else img
 
 
 def thumbnail(path: str, max_side: int = 320) -> np.ndarray:

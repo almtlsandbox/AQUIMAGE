@@ -604,6 +604,132 @@ def test_video_audio_shorter_than_video(tmp_path):
     assert info["frames"] == 75 and video.probe(str(tmp_path / "o.mp4"))["frames"] >= 74
 
 
+# ---------------------------------------------------------------- v1.10 : séries, réglages conservés
+def _jpeg_at(path, arr, when):
+    """JPEG avec une heure de prise de vue (EXIF)."""
+    im = Image.fromarray(arr)
+    ex = im.getexif()
+    ex[0x0132] = when
+    ex.get_ifd(0x8769)[0x9003] = when
+    im.save(path, quality=92, exif=ex)
+
+
+def test_series_grouping_and_pull():
+    from aquimage import series
+    infos = [
+        {"folder": "a", "time": 0.0, "red": 0.30, "rgb": [0.2, 0.4, 0.5]},
+        {"folder": "a", "time": 3.0, "red": 0.32, "rgb": [0.21, 0.4, 0.5]},
+        {"folder": "a", "time": 6.0, "red": 0.31, "rgb": [0.2, 0.41, 0.5]},
+        {"folder": "a", "time": 60.0, "red": 0.31, "rgb": [0.2, 0.41, 0.5]},   # trop tard
+        {"folder": "a", "time": 62.0, "red": 0.60, "rgb": [0.2, 0.41, 0.5]},   # autre scène
+        {"folder": "a", "time": None, "red": 0.31, "rgb": [0.2, 0.41, 0.5]},
+    ]
+    assert series.group(infos) == [[0, 1, 2]]
+    ss = [Settings(water_keep=0.0), Settings(water_keep=0.65), Settings(water_keep=0.65)]
+    out = series.smooth(ss, [[0, 1, 2]])
+    spread = max(o.water_keep for o in out.values()) - min(o.water_keep for o in out.values())
+    assert spread < 0.35 * 0.65                      # écart nettement réduit
+    assert out[1].water_keep == pytest.approx(0.65)
+    # Les réglages créatifs ne sont pas touchés
+    assert series.pull(Settings(temperature=0.3), [Settings(), Settings()]).temperature == pytest.approx(0.3)
+
+
+def test_series_auto_for_files(tmp_path):
+    from aquimage import series
+    a, b = underwater(seed=3)[0], underwater(seed=3, water=(0.02, 0.26, 0.31))[0]
+    far = underwater(seed=5, water=(0.02, 0.30, 0.12), beta=(0.6, 0.1, 0.3))[0]
+    _jpeg_at(str(tmp_path / "A1.jpg"), a, "2026:10:19 10:00:00")
+    _jpeg_at(str(tmp_path / "A2.jpg"), b, "2026:10:19 10:00:04")
+    _jpeg_at(str(tmp_path / "A3.jpg"), far, "2026:10:19 10:05:00")
+    assert series.capture_time(str(tmp_path / "A2.jpg")) - series.capture_time(str(tmp_path / "A1.jpg")) == 4
+    s1, d1 = series.auto_for(str(tmp_path / "A1.jpg"))
+    s2, d2 = series.auto_for(str(tmp_path / "A2.jpg"))
+    s3, d3 = series.auto_for(str(tmp_path / "A3.jpg"))
+    assert d1.get("series") == 2 and d2.get("series") == 2 and "series" not in d3
+    alone1 = series.photo_auto(str(tmp_path / "A1.jpg"))[0]
+    alone2 = series.photo_auto(str(tmp_path / "A2.jpg"))[0]
+    for k in ("color", "water_keep", "strength"):
+        assert abs(getattr(s1, k) - getattr(s2, k)) <= abs(getattr(alone1, k) - getattr(alone2, k)) + 1e-6
+    # Même résultat dans le lot (voisines fournies) que dans l'atelier
+    sib = [str(tmp_path / n) for n in ("A1.jpg", "A2.jpg", "A3.jpg")]
+    assert series.auto_for(sib[0], sib)[0].to_dict() == s1.to_dict()
+
+
+def test_sidecar_roundtrip(tmp_path, img):
+    from aquimage import sidecar
+    p = str(tmp_path / "été" / "photo 1.jpg")
+    os.makedirs(os.path.dirname(p))
+    Image.fromarray(img).save(p)
+    assert sidecar.get(p) is None
+    assert sidecar.put(p, Settings(temperature=0.4).to_dict(), rot=1, crop=[0.1, 0.1, 0.9, 0.9])
+    e = sidecar.get(p)
+    assert e["rot"] == 1 and e["settings"]["temperature"] == pytest.approx(0.4) and len(e["crop"]) == 4
+    assert sidecar.names(os.path.dirname(p)) == {"photo 1.jpg"}
+    assert os.path.exists(os.path.join(os.path.dirname(p), sidecar.FILE))
+    # Géométrie seule : la couleur reste automatique
+    sidecar.put(p, None, rot=2)
+    assert "settings" not in sidecar.get(p)
+    assert sidecar.remove(p) and sidecar.get(p) is None
+    assert not os.path.exists(os.path.join(os.path.dirname(p), sidecar.FILE))
+
+
+def test_batch_uses_saved_settings(tmp_path, img):
+    from aquimage import sidecar
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    Image.fromarray(img).save(str(src / "a.jpg"), quality=95)
+    Image.fromarray(underwater(seed=1)[0]).save(str(src / "b.jpg"), quality=95)
+    sidecar.put(str(src / "a.jpg"), Settings(saturation=0.0).to_dict(), rot=1,
+                crop=[0.0, 0.0, 0.5, 0.5])
+    job = BatchJob(BatchOptions(src=str(src), dst=str(dst)))
+    assert all(i.kind == "image" for i in job.items) and len(job.items) == 2   # le fichier de réglages n'est pas un média
+    job.run()
+    by = {i.rel: i for i in job.items}
+    assert by["a.jpg"].status == "ok" and by["a.jpg"].diag["kind"] == "saved"
+    a = np.asarray(Image.open(str(dst / "a.jpg")))
+    h, w = img.shape[:2]
+    assert a.shape[:2] == (w // 2, h // 2)            # pivotée puis recadrée
+    assert np.abs(a[..., 0].astype(int) - a[..., 1]).mean() < 3      # saturation 0
+    assert by["b.jpg"].diag["kind"] != "saved"
+    # Option désactivée : analyse automatique pour tous
+    job2 = BatchJob(BatchOptions(src=str(src), dst=str(tmp_path / "dst2"), use_saved=False))
+    job2.run()
+    assert Image.open(str(tmp_path / "dst2" / "a.jpg")).size == (w, h)
+
+
+def test_server_keep_and_forget(tmp_path, img):
+    from http.server import ThreadingHTTPServer
+    from aquimage import server, sidecar
+    p = str(tmp_path / "x.jpg")
+    Image.fromarray(img).save(p, quality=95)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def post(path, body):
+        req = urllib.request.Request(base + path, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json"})
+        return json.loads(urllib.request.urlopen(req, timeout=60).read())
+    try:
+        d = post("/api/open", {"path": p})
+        assert d["saved"] is False and d["auto"] == d["settings"]
+        post("/api/rotate", {"id": d["id"], "rot": 1})
+        mine = dict(d["settings"], temperature=0.5)
+        assert post("/api/keep", {"id": d["id"], "settings": mine})["saved"] is True
+        files = json.loads(urllib.request.urlopen(
+            base + "/api/files?dir=" + urllib.request.quote(str(tmp_path))).read())["files"]
+        assert [f["kept"] for f in files] == [True]
+        d2 = post("/api/open", {"path": p})                 # réouverture
+        assert d2["saved"] and d2["rot"] == 1
+        assert d2["settings"]["temperature"] == pytest.approx(0.5)
+        assert d2["auto"]["temperature"] == pytest.approx(0.0)
+        assert post("/api/forget", {"id": d2["id"]})["saved"] is False
+        assert sidecar.get(p) is None
+        assert post("/api/open", {"path": p})["rot"] == 0
+    finally:
+        httpd.shutdown()
+
+
 # ---------------------------------------------------------------------------
 # Vraies photos : non-régression de la correction automatique
 # ---------------------------------------------------------------------------

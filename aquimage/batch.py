@@ -27,7 +27,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from . import autotune, core, fileio, video
+import numpy as np
+
+from . import autotune, core, fileio, series, sidecar, video
 from .core import Settings
 
 ADJUSTABLE = ("temperature", "tint", "exposure", "saturation", "contrast",
@@ -49,6 +51,8 @@ class BatchOptions:
     suffix: str = ""
     workers: int = 0                   # 0 = automatique
     dedupe: bool = True                # ignorer les doublons exacts
+    use_saved: bool = True             # respecter les réglages de l'atelier
+    series: bool = True                # cohérence des photos d'une même série
 
 
 @dataclass
@@ -156,12 +160,25 @@ def out_path(opts: BatchOptions, item: Item) -> str:
     return os.path.join(os.path.abspath(opts.dst), stem + opts.suffix + ext)
 
 
-def settings_for(opts: BatchOptions, img=None, video_path: str = "") -> tuple:
-    """(réglages, diagnostic) d'un fichier selon le mode du lot."""
+def settings_for(opts: BatchOptions, img=None, video_path: str = "",
+                 path: str = "", siblings=None, saved: Optional[dict] = None) -> tuple:
+    """(réglages, diagnostic) d'un fichier selon le mode du lot.
+
+    *saved* : réglages enregistrés dans l'atelier pour ce fichier ; ils
+    priment sur l'analyse automatique.  *path* (photo) : l'analyse se fait
+    sur la copie réduite du fichier, série comprise, comme dans l'atelier.
+    """
     if opts.mode == "fixe" and opts.fixed:
         return Settings.from_dict(opts.fixed), {"type": "réglages fixes", "kind": "fixed"}
+    if saved and saved.get("settings"):
+        return (Settings.from_dict(saved["settings"]),
+                {"type": "réglages de l'atelier", "kind": "saved"})
     if video_path:
         s, diag = video.video_settings(video_path)
+    elif path and opts.series:
+        s, diag = series.auto_for(path, siblings)
+    elif path:
+        s, diag, _ = series.photo_auto(path)
     else:
         s, diag = autotune.auto_settings(img)
     if opts.adjust:
@@ -251,6 +268,14 @@ class BatchJob:
         self._report_start()
         workers = self.opts.workers or max(1, min(4, (os.cpu_count() or 2) // 2))
         images = [i for i in self.items if i.kind == "image" and i.status == "en attente"]
+        # Photos de chaque dossier, dans l'ordre : voisines de série
+        self._siblings: Dict[str, List[str]] = {}
+        for i in self.items:
+            if i.kind == "image":
+                p = os.path.abspath(os.path.join(self.opts.src, i.rel))
+                self._siblings.setdefault(os.path.dirname(p), []).append(p)
+        for v in self._siblings.values():
+            v.sort(key=lambda q: os.path.basename(q).lower())
         videos = [i for i in self.items if i.kind == "video" and i.status == "en attente"]
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -286,11 +311,19 @@ class BatchJob:
         it.status = "en cours"
         self._touch()
         try:
+            saved = sidecar.get(src) if self.opts.use_saved else None
             img, meta = fileio.read_image(src)
-            s, diag = settings_for(self.opts, img)
+            s, diag = settings_for(
+                self.opts, img, path=src, saved=saved,
+                siblings=self._siblings.get(os.path.dirname(os.path.abspath(src))))
             it.progress = 0.15
+            if saved and saved.get("rot"):
+                img = core.rotate90(img, int(saved["rot"]))
             plan = core.build_plan(img, s)
             out = core.apply_plan(img, plan, progress=lambda f: setattr(it, "progress", 0.15 + 0.75 * f))
+            if saved and saved.get("crop"):
+                x0, y0, x1, y1 = video.crop_box(out.shape[1], out.shape[0], saved["crop"])
+                out = np.ascontiguousarray(out[y0:y1, x0:x1])
             fileio.save_image(dst, out, meta, self.opts.quality)
             it.settings, it.diag = s.to_dict(), diag
             it.status, it.out, it.progress = "ok", dst, 1.0
@@ -312,11 +345,15 @@ class BatchJob:
         it.status, it.message = "en cours", "analyse"
         self._touch()
         try:
-            s, diag = settings_for(self.opts, video_path=src)
+            saved = (sidecar.get(src) if self.opts.use_saved else None) or {}
+            s, diag = settings_for(self.opts, video_path=src, saved=saved)
             it.settings, it.diag, it.message = s.to_dict(), diag, ""
             info = video.process_video(
                 src, dst, s, progress=lambda f: setattr(it, "progress", f),
-                cancel=self.cancel, workers=workers)
+                cancel=self.cancel, workers=workers,
+                rotate=int(saved.get("rot", 0)), crop=saved.get("crop"),
+                trim=saved.get("trim") or (0.0, 1.0),
+                stabilize=float(saved.get("stab", 0.0)))
             it.status, it.out, it.progress = "ok", dst, 1.0
             if not info.get("audio"):
                 it.message = "sans son (ffmpeg absent)"

@@ -151,6 +151,7 @@ const SLIDERS = [
   { group: "g.haze", items: [
     ["strength", "sl.strength", 0, 1, 0.05],
     ["t_min", "sl.t_min", 0.05, 0.6, 0.01],
+    ["denoise", "sl.denoise", 0, 1, 0.05],
   ]},
   { group: "g.tone", items: [
     ["exposure", "sl.exposure", -2, 2, 0.05],
@@ -247,6 +248,7 @@ const Lot = {
       src: $("#src").value.trim(), dst: $("#dst").value.trim(),
       recursive: $("#recursive").checked, videos: $("#videos").checked,
       overwrite: $("#overwrite").checked, dedupe: $("#dedupe").checked, fmt: $("#fmt").value,
+      use_saved: $("#use-saved").checked, series: $("#series").checked,
       quality: Number($("#quality").value), mode, adjust,
       fixed: mode === "fixe" ? Atelier.settings : null,
     };
@@ -413,6 +415,14 @@ const Viewer = {
           && !$("#view-atelier").hidden && !e.target.matches("input,select,textarea")) {
         e.preventDefault(); Atelier.rotate(e.shiftKey ? -1 : 1);
       }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !$("#view-atelier").hidden && Atelier.sess
+          && !e.target.matches("input:not([type=range]):not([type=checkbox]),textarea,select")) {
+        const k = e.key.toLowerCase();
+        if (k === "z") { e.preventDefault(); if (e.shiftKey) Atelier.redo(); else Atelier.undo(); }
+        else if (k === "y") { e.preventDefault(); Atelier.redo(); }
+        else if (k === "c" && !e.shiftKey && !String(window.getSelection())) { e.preventDefault(); Atelier.copy(); }
+        else if (k === "v" && !e.shiftKey) { e.preventDefault(); Atelier.paste(); }
+      }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (!$("#view-atelier").hidden && !e.target.matches("input,select,textarea")) Atelier.step(e.key === "ArrowRight" ? 1 : -1);
       }
@@ -559,7 +569,7 @@ const mmss = sec => { sec = Math.max(0, Math.round(sec)); return `${Math.floor(s
 /* ================================================================== ATELIER */
 const Atelier = {
   sess: null, settings: null, auto: null, dir: "", files: [], seq: 0, inflight: false, pending: false,
-  els: {},
+  els: {}, hist: [], hpos: -1, clip: null, keepTimer: null, restoring: false,
   init() {
     const box = $("#sliders");
     for (const g of SLIDERS) {
@@ -576,7 +586,8 @@ const Atelier = {
       for (const [k, label, min, max, step] of g.items) {
         const el = sliderEl(k, label, min, max, step, (INFO.defaults[k] ?? 0), (key, v) => this.change(key, v));
         $("input", el).disabled = true;
-        el.addEventListener("dblclick", () => { if (this.auto) { this.change(k, this.auto[k]); el.set(this.auto[k]); } });
+        el.addEventListener("dblclick", () => { if (this.auto) { this.change(k, this.auto[k]); el.set(this.auto[k]); this.commit(); } });
+        $("input", el).addEventListener("change", () => this.commit());
         $(".row span", el).dataset.i18nTitle = "p.dblclick";
         $(".row span", el).title = T("p.dblclick");
         this.els[k] = el;
@@ -587,6 +598,11 @@ const Atelier = {
     $("#strip-pick").addEventListener("click", () => this.pickDir());
     $("#viewer-pick").addEventListener("click", () => this.pickDir());
     $("#btn-auto").addEventListener("click", () => this.resetAuto());
+    $("#btn-undo").addEventListener("click", () => this.undo());
+    $("#btn-redo").addEventListener("click", () => this.redo());
+    $("#btn-copy").addEventListener("click", () => this.copy());
+    $("#btn-paste").addEventListener("click", () => this.paste());
+    try { this.clip = JSON.parse(localStorage.getItem("aquimage.clip") || "null"); } catch (e) { this.clip = null; }
     $("#btn-save").addEventListener("click", () => this.save());
     $("#btn-reveal").addEventListener("click", () => { if (this.lastOut) reveal(this.lastOut, $("#save-msg")); });
     $("#btn-tolot").addEventListener("click", () => {
@@ -669,6 +685,8 @@ const Atelier = {
     $("#p-name").textContent = path.split(/[\\/]/).pop();
     $("#p-diag").textContent = T("p.analysing");
     $("#busy").hidden = false;
+    // Réglages en attente d'enregistrement pour le fichier que l'on quitte
+    if (this.keepTimer) { clearTimeout(this.keepTimer); this.keepTimer = null; await this.keepNow(this.sess); }
     try {
       const d = await api("/api/open", { path });
       this.setSession(d, true);
@@ -699,6 +717,13 @@ const Atelier = {
       li.appendChild(b);
     }
     if (b) { b.hidden = !f.done; b.title = T("f.done_badge"); }
+    let k = $(".kept", li);
+    if (f.kept && !k) {
+      k = document.createElement("span");
+      k.className = "kept"; k.textContent = "✎";
+      li.appendChild(k);
+    }
+    if (k) { k.hidden = !f.kept; k.title = T("f.kept_badge"); }
   },
   applyFilter() {
     const n = { all: 0, image: 0, video: 0, done: 0 };
@@ -735,9 +760,12 @@ const Atelier = {
   setSession(d, fresh) {
     this.sess = d;
     this.settings = { ...d.settings };
-    this.auto = { ...d.settings };
-    for (const [k, el] of Object.entries(this.els)) { el.set(this.settings[k]); $("input", el).disabled = false; el.classList.remove("changed"); }
+    this.auto = { ...(d.auto || d.settings) };
+    this.showSettings();
+    for (const el of Object.values(this.els)) $("input", el).disabled = false;
     this.showDiag();
+    $("#btn-copy").disabled = false; $("#btn-paste").disabled = !this.clip;
+    if (fresh) { this.hist = []; this.hpos = -1; this.showKept(d.saved ? "p.kept" : ""); }
     $("#btn-auto").disabled = false; $("#btn-save").disabled = false; $("#btn-tolot").disabled = false;
     $("#rot-l").disabled = false; $("#rot-r").disabled = false;
     for (const id of ["#crop-btn", "#crop-ratio", "#crop-reset"]) $(id).disabled = false;
@@ -762,6 +790,121 @@ const Atelier = {
     this.showReveal(null);
     this.loadBefore(fresh);
     this.render();
+    if (fresh) this.commit(true);
+  },
+  /* ------------------------------------------- historique, copie, conservation */
+  showSettings() {
+    for (const [k, el] of Object.entries(this.els)) {
+      el.set(this.settings[k]);
+      el.classList.toggle("changed", Math.abs(this.settings[k] - this.auto[k]) > 1e-6);
+    }
+  },
+  snapshot() {
+    const d = this.sess;
+    return JSON.stringify({ settings: this.settings, rot: d.rot || 0, crop: this.crop || null,
+      trim: d.kind === "video" ? [Number($("#trim-a").value), Number($("#trim-b").value)] : [0, 1],
+      stab: d.kind === "video" ? (d.stab || 0) : 0 });
+  },
+  /* Enregistre l'état courant dans l'historique (après chaque modification
+     terminée) et le conserve pour ce fichier. */
+  commit(first) {
+    if (!this.sess || this.restoring) return;
+    const snap = this.snapshot();
+    if (this.hist[this.hpos] === snap) return;
+    this.hist = this.hist.slice(0, this.hpos + 1);
+    this.hist.push(snap);
+    if (this.hist.length > 100) this.hist.shift();
+    this.hpos = this.hist.length - 1;
+    this.histButtons();
+    if (!first) this.keepSoon();
+  },
+  histButtons() {
+    $("#btn-undo").disabled = this.hpos <= 0;
+    $("#btn-redo").disabled = this.hpos >= this.hist.length - 1;
+  },
+  undo() { if (this.hpos > 0) this.restore(this.hpos - 1); },
+  redo() { if (this.hpos < this.hist.length - 1) this.restore(this.hpos + 1); },
+  async restore(pos) {
+    if (!this.sess || this.restoring) return;
+    this.restoring = true;
+    const st = JSON.parse(this.hist[pos]), d = this.sess;
+    this.hpos = pos;
+    this.histButtons();
+    this.settings = { ...st.settings };
+    this.showSettings();
+    try {
+      if ((d.rot || 0) !== st.rot) {
+        const r = await api("/api/rotate", { id: d.id, rot: st.rot });
+        d.rot = r.rot;
+        this.showDiag();
+        this.loadBefore(true);
+      }
+      const body = { crop: st.crop };
+      if (d.kind === "video") { body.trim = st.trim; body.stab = st.stab; }
+      const e = await api("/api/edit", { id: d.id, ...body });
+      d.crop = e.crop; d.trim = e.trim; d.stab = e.stab; this.crop = e.crop;
+      if (d.kind === "video") {
+        $("#trim-a").value = e.trim[0]; $("#trim-b").value = e.trim[1];
+        $("#stab").checked = (e.stab || 0) > 0;
+        if (e.stab) $("#stab-k").value = e.stab;
+        $("#stab-k-wrap").hidden = !$("#stab").checked;
+        $("#stab-k-v").textContent = fmtNum($("#stab-k").value, 2);
+      }
+    } catch (e) { $("#save-msg").textContent = e.message; }
+    this.restoring = false;
+    Viewer.apply(); this.cropInfo(); this.trimInfo();
+    this.render();
+    this.keepSoon();
+  },
+  copy() {
+    if (!this.settings) return;
+    this.clip = { ...this.settings };
+    try { localStorage.setItem("aquimage.clip", JSON.stringify(this.clip)); } catch (e) {}
+    $("#btn-paste").disabled = false;
+    this.showKept("p.copied");
+  },
+  paste() {
+    if (!this.sess || !this.clip) return;
+    this.settings = { ...this.settings, ...this.clip };
+    this.showSettings();
+    this.render();
+    this.commit();
+    this.showKept("p.pasted");
+  },
+  showKept(key) {
+    const el = $("#p-kept");
+    if (key) { el.dataset.i18n = key; el.textContent = T(key); }
+    else { delete el.dataset.i18n; el.textContent = ""; }
+  },
+  /* État identique à l'analyse automatique, sans retouche de géométrie ? */
+  pristine() {
+    const d = this.sess, st = JSON.parse(this.snapshot());
+    return this.sameAsAuto() && !st.rot && !st.crop && st.trim[0] <= 0 && st.trim[1] >= 1 && !st.stab;
+  },
+  sameAsAuto() {
+    return Object.keys(this.auto).every(k => Math.abs((this.settings[k] ?? 0) - this.auto[k]) < 1e-6);
+  },
+  keepSoon() {
+    clearTimeout(this.keepTimer);
+    const sess = this.sess;
+    this.keepTimer = setTimeout(() => { this.keepTimer = null; this.keepNow(sess); }, 500);
+  },
+  async keepNow(sess) {
+    if (!sess || sess !== this.sess) return;
+    const f = this.files.find(x => x.path === sess.path);
+    try {
+      if (this.pristine()) {
+        if (sess.saved) await api("/api/forget", { id: sess.id });
+        sess.saved = false;
+        this.showKept("");
+      } else {
+        // Couleurs inchangées : seule la géométrie est gardée (couleur automatique)
+        const r = await api("/api/keep", { id: sess.id, settings: this.sameAsAuto() ? null : this.settings });
+        sess.saved = !!r.saved;
+        this.showKept(r.saved ? "p.kept" : "p.kept_fail");
+      }
+    } catch (e) { return; }
+    if (f) { f.kept = sess.saved; this.markDone(f); }
   },
   showDiag() {
     const d = this.sess;
@@ -772,6 +915,7 @@ const Atelier = {
       ? T("p.video_size", { w, h, d: dur(d.info.duration) })
       : `${w}×${h}${d.info.bits === 16 ? T("p.bits16") : ""}`;
     let txt = T("p.diag", { sz, type: diagText(d.diag) });
+    if (d.diag && d.diag.series > 1) txt += " " + T("p.series", { n: d.diag.series });
     if (d.rot) txt += " " + T("p.rotated", { deg: d.rot * 90 }) + ".";
     $("#p-diag").textContent = txt;
   },
@@ -783,6 +927,7 @@ const Atelier = {
       if (!Crop.drag) this.crop = d.crop;
     } catch (e) { $("#save-msg").textContent = e.message; }
     this.cropInfo(); this.trimInfo();
+    if (!Crop.drag) this.commit();
   },
   fullSize() {
     const d = this.sess;
@@ -814,6 +959,7 @@ const Atelier = {
       this.showDiag();
       this.loadBefore(true);
       this.render();
+      this.commit();
     } catch (e) { $("#save-msg").textContent = e.message; $("#busy").hidden = true; }
   },
   loadBefore(fresh) {
@@ -849,7 +995,9 @@ const Atelier = {
     if (!this.sess) return;
     $("#p-diag").textContent = T("p.reanalysing");
     const d = await api("/api/auto", { id: this.sess.id, settings: {} });
+    d.saved = this.sess.saved;
     this.setSession(d, false);
+    this.commit();
   },
   async frame(pos) {
     if (!this.sess) return;
