@@ -53,6 +53,8 @@ Si `git pull` dit que la branche n'est reliée à rien, reliez-la une fois pour 
 
 ## Lot : toute une plongée d'un coup
 
+![Le lot : dossier des originaux, options, et chaque photo avant et après avec le type d'image détecté](docs/interface-lot.jpg)
+
 1. Choisissez le dossier des originaux et celui des fichiers corrigés.
 2. Cliquez sur **Corriger le dossier**.
 
@@ -71,6 +73,8 @@ Chaque photo et chaque vidéo reçoit **ses propres réglages**, estimés d'apr�
 - **Dossiers de sortie :** un dossier nommé `AquImage`, ou contenant un rapport, n'est jamais retraité.
 
 ## Atelier : une photo à la fois
+
+![L'atelier : photos du dossier à gauche, comparaison avant / après au centre, réglages à droite](docs/interface-atelier.jpg)
 
 - **Colonne de gauche :** les photos et vidéos du dossier. Le menu filtre par type. « Masquer les déjà enregistrées » cache celles qui ont déjà une version dans le dossier « Enregistrer dans » ; ces dernières portent une coche ✓.
 - **Comparaison :** faites glisser le séparateur orange entre l'original et la photo corrigée. Maintenez **Espace** pour voir l'original en entier.
@@ -388,17 +392,6 @@ Suite de l'analyse complète du voyage Mer Rouge 2026 (1 061 photos uniques et v
 ### 1.1.0
 
 Corrige les rendus « durs » constatés sur une série de 1 576 photos de mer Rouge.
-
-![Original, AquImage 1.0 et 1.1 sur des photos de mer Rouge](docs/mer-rouge-v1.1.jpg)
-
-| Mesure (médiane, 40 photos de mer Rouge) | Original | 1.0 | 1.1 |
-| --- | --- | --- | --- |
-| Pixels écrêtés | 0,1 % | 5,7 % | 0,0 % |
-| Photos avec plus de 2 % d'écrêtage | 7 / 40 | 39 / 40 | 0 / 40 |
-| Zones claires devenues blanches | 0,7 % | 75 % | 0 % |
-| Contraste (écart-type de luminance) | 46 | 71 | 55 |
-| Contraste local | 7,4 | 13,2 | 9,8 |
-| Dominante de couleur restante | 18,5 | 5,5 | 5,3 |
 
 - **Hautes lumières :** épaule douce au lieu d'un écrêtage, et étirement des niveaux limité.
 - **Réglages par défaut adoucis :** retrait du voile 0,6, saturation 1,0, gain de couleur maximal ×4.
