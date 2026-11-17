@@ -32,7 +32,7 @@ Double-cliquez sur **`AquImage.bat`**.
 - La version s'affiche à côté du nom, en haut à gauche.
 - Fermez la fenêtre noire pour quitter.
 
-Python 3.9 ou plus récent est nécessaire. Le lanceur trouve `C:\Python\Python39`, sinon `py` ou `python`.
+Python 3.9 ou plus récent est nécessaire. Le lanceur trouve `C:\Python\Python39`, sinon `py` ou `python`. **S'il n'y a pas de Python**, il télécharge Python 3.12 depuis python.org, en vérifie l'intégrité et l'installe sans question ni droits administrateur, pour votre compte seulement, dans `%LOCALAPPDATA%\AquImage\python`. Ce Python n'est pas ajouté au PATH et ne gêne aucun autre programme ; il se désinstalle depuis Paramètres > Applications.
 
 **Mettre à jour :** fermez AquImage, puis, dans le dossier du programme :
 
@@ -219,6 +219,11 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 - **Bruit :** la réduction du bruit reste modeste, elle n'efface pas le grain d'une photo très voilée.
 
 ## Historique
+
+### 1.10.1
+
+- **Installation sans Python :** si aucun Python 3.9+ n'est présent, `AquImage.bat` télécharge Python 3.12 depuis python.org, vérifie le fichier et l'installe en silence pour l'utilisateur, sans droits administrateur.
+- **Faux Python du Microsoft Store :** il n'est plus pris pour un vrai Python ; le lanceur vérifie que l'interpréteur répond et que sa version suffit.
 
 ### 1.10.0
 
