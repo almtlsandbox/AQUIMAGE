@@ -39,6 +39,12 @@ _TAG_ORIGINAL, _TAG_SUBSEC = 0x9003, 0x9291
 
 def capture_time(path: str) -> Optional[float]:
     """Heure de prise de vue (EXIF, en secondes), ou None si inconnue."""
+    if fileio.is_raw(path):
+        txt = fileio.raw_date(path)
+        try:
+            return datetime.strptime(txt, "%Y:%m:%d %H:%M:%S").timestamp() if txt else None
+        except ValueError:
+            return None
     try:
         with Image.open(path) as im:
             exif = im.getexif()

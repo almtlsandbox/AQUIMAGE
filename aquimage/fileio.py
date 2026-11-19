@@ -7,12 +7,16 @@ Lecture / écriture des images avec conservation des métadonnées.
   profil ICC conservé, logiciel = AquImage.
 - 8 bits (JPEG, PNG, TIFF, WebP, BMP) et 16 bits (PNG, TIFF) ; le 16 bits
   est traité et enregistré en 16 bits.
+- RAW des appareils (DNG, CR2, CR3, NEF, ARW, RW2, ORF, RAF…) lus en
+  16 bits par la bibliothèque libre rawpy (LibRaw).  Un RAW est enregistré
+  en JPEG (ou dans le format choisi) : on ne réécrit pas de RAW.
 - Écriture atomique (fichier temporaire puis renommage).
 """
 from __future__ import annotations
 
 import io
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
@@ -25,6 +29,11 @@ from . import __version__, core
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mts", ".m2ts", ".3gp"}
+# RAW des appareils photo (lus par LibRaw)
+RAW_EXTS = {".dng", ".cr2", ".cr3", ".crw", ".nef", ".nrw", ".arw", ".srf", ".sr2",
+            ".rw2", ".raw", ".orf", ".raf", ".pef", ".srw", ".rwl", ".3fr", ".iiq",
+            ".erf", ".kdc", ".mrw", ".x3f", ".mef", ".mos"}
+RAW_OUT_EXT = ".jpg"     # format d'enregistrement d'un RAW quand on garde « le même format »
 
 _TAG_ORIENTATION = 0x0112
 _TAG_SOFTWARE = 0x0131
@@ -40,7 +49,116 @@ class ImageMeta:
 
 
 def is_image(path: str) -> bool:
-    return os.path.splitext(path)[1].lower() in IMAGE_EXTS
+    """Photo lisible : formats courants et RAW."""
+    ext = os.path.splitext(path)[1].lower()
+    return ext in IMAGE_EXTS or ext in RAW_EXTS
+
+
+def is_raw(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in RAW_EXTS
+
+
+def output_ext(path: str) -> str:
+    """Extension de sortie quand on garde le format d'origine."""
+    ext = os.path.splitext(path)[1]
+    return RAW_OUT_EXT if ext.lower() in RAW_EXTS else ext
+
+
+# ---------------------------------------------------------------------------
+# RAW
+# ---------------------------------------------------------------------------
+
+def _rawpy():
+    try:
+        import rawpy
+    except ImportError:
+        raise IOError("lecture des RAW impossible : le module rawpy n'est pas installé "
+                      "(relancez AquImage.bat, ou : pip install rawpy)") from None
+    return rawpy
+
+
+_DATE_RE = re.compile(rb"((?:19|20)\d\d):([01]\d):([0-3]\d) ([0-2]\d):([0-5]\d):([0-5]\d)")
+
+
+def raw_date(path: str) -> Optional[str]:
+    """Date de prise de vue d'un RAW (« AAAA:MM:JJ hh:mm:ss »).  Tous les RAW
+    portent leurs dates EXIF en clair au début du fichier ; la première
+    trouvée est celle de la prise de vue (les appareils n'en écrivent pas
+    d'autre)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(1 << 20)
+    except OSError:
+        return None
+    m = _DATE_RE.search(head)
+    return m.group(0).decode("ascii") if m else None
+
+
+def _raw_meta(path: str) -> ImageMeta:
+    """Métadonnées d'un RAW pour les fichiers enregistrés : date de prise de
+    vue (tri des photos, séries) et logiciel."""
+    meta = ImageMeta(fmt="RAW", bits=16)
+    try:
+        exif = Image.Exif()
+        exif[_TAG_SOFTWARE] = f"AquImage {__version__}"
+        date = raw_date(path)
+        if date:
+            exif[0x0132] = date                       # DateTime
+            sub = exif.get_ifd(0x8769)
+            sub[0x9003] = date                        # DateTimeOriginal
+            sub[0x9004] = date                        # DateTimeDigitized
+        meta.exif = exif.tobytes()
+    except Exception:
+        meta.exif = None
+    return meta
+
+
+def read_raw(path: str, half: bool = False) -> np.ndarray:
+    """Développe un RAW en RGB 16 bits, encodé sRGB, redressé.
+
+    Balance des blancs de l'appareil, sans éclaircissement automatique ni
+    écrêtage supplémentaire : AquImage fait lui-même l'étirement des niveaux.
+    *half* : demi-résolution (4 fois plus rapide), pour l'analyse et les
+    vignettes."""
+    rawpy = _rawpy()
+    with rawpy.imread(path) as raw:
+        rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
+                              output_bps=16, output_color=rawpy.ColorSpace.sRGB,
+                              gamma=(2.4, 12.92), half_size=half)
+    return np.ascontiguousarray(rgb[..., :3])
+
+
+def _raw_thumb(path: str, max_side: int) -> np.ndarray:
+    """Vignette d'un RAW : l'aperçu JPEG qu'il contient (immédiat), sinon un
+    développement en demi-résolution."""
+    rawpy = _rawpy()
+    try:
+        with rawpy.imread(path) as raw:
+            th = raw.extract_thumb()
+            flip = int(getattr(raw.sizes, "flip", 0) or 0)
+        if th.format == rawpy.ThumbFormat.JPEG:
+            with Image.open(io.BytesIO(th.data)) as im:
+                im.draft("RGB", (max_side * 2, max_side * 2))
+                im = ImageOps.exif_transpose(im).convert("RGB")
+                arr = np.asarray(im)
+        else:
+            arr = np.asarray(th.data)[..., :3]
+            if arr.dtype == np.uint16:
+                arr = (arr >> 8).astype(np.uint8)
+        # Orientation de l'appareil (LibRaw : 3 = 180°, 5 = 90° à gauche, 6 = 90° à droite)
+        k = {3: 2, 5: 1, 6: -1}.get(flip, 0)
+        if k and not _thumb_is_rotated(arr, path, flip):
+            arr = np.rot90(arr, k)
+    except Exception:
+        arr = read_raw(path, half=True)
+        arr = (arr >> 8).astype(np.uint8)
+    return core.resize_max(np.ascontiguousarray(arr), max_side)
+
+
+def _thumb_is_rotated(arr: np.ndarray, path: str, flip: int) -> bool:
+    """Vrai si l'aperçu est déjà dans le bon sens (portrait pour une photo
+    tenue verticalement)."""
+    return flip in (5, 6) and arr.shape[0] > arr.shape[1]
 
 
 def is_video(path: str) -> bool:
@@ -61,6 +179,8 @@ def _read_16bit(path: str) -> Optional[np.ndarray]:
 
 def read_image(path: str) -> Tuple[np.ndarray, ImageMeta]:
     """Lit une image en RGB (uint8 ou uint16), redressée selon l'EXIF."""
+    if is_raw(path):
+        return read_raw(path), _raw_meta(path)
     with Image.open(path) as im:
         meta = ImageMeta(fmt=(im.format or "").upper(),
                          icc=im.info.get("icc_profile"))
@@ -192,6 +312,9 @@ def jpeg_bytes(rgb: np.ndarray, quality: int = 88) -> bytes:
 def read_analysis(path: str, max_side: int = 1600) -> np.ndarray:
     """Copie réduite (RGB 8 bits, orientée) pour l'analyse automatique : un
     JPEG est décodé directement en petit, bien plus vite que l'image entière."""
+    if is_raw(path):
+        img = core.resize_max(read_raw(path, half=True), max_side)
+        return np.ascontiguousarray((img >> 8).astype(np.uint8))
     try:
         with Image.open(path) as im:
             if im.format == "JPEG":
@@ -215,6 +338,8 @@ def thumbnail(path: str, max_side: int = 320) -> np.ndarray:
             raise IOError("vidéo illisible")
         from .core import resize_max
         return resize_max(frame, max_side)
+    if is_raw(path):
+        return _raw_thumb(path, max_side)
     with Image.open(path) as im:
         try:
             im.draft("RGB", (max_side * 2, max_side * 2))   # JPEG : décodage réduit

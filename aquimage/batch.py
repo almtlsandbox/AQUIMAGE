@@ -151,8 +151,22 @@ def find_duplicates(src: str, items: List["Item"]) -> Dict[str, str]:
     return dups
 
 
+def raw_twins(items: List["Item"]) -> Dict[str, str]:
+    """{rel d'un JPEG (ou autre): rel du RAW de même nom dans le même dossier}.
+    Un appareil réglé en « RAW + JPEG » enregistre les deux : seul le RAW,
+    plus riche, est corrigé (les deux donneraient le même fichier de sortie)."""
+    raws = {os.path.splitext(i.rel)[0].lower(): i.rel for i in items
+            if i.kind == "image" and fileio.is_raw(i.rel)}
+    if not raws:
+        return {}
+    return {i.rel: raws[os.path.splitext(i.rel)[0].lower()] for i in items
+            if i.kind == "image" and not fileio.is_raw(i.rel)
+            and os.path.splitext(i.rel)[0].lower() in raws}
+
+
 def out_path(opts: BatchOptions, item: Item) -> str:
     stem, ext = os.path.splitext(item.rel)
+    ext = fileio.output_ext(item.rel)
     if item.kind == "video":
         ext = ".mp4"
     elif opts.fmt in ("jpg", "png", "tif"):
@@ -209,6 +223,11 @@ class BatchJob:
         for it in self.items:
             if is_old_output(it.rel):
                 it.status, it.message = "ignoré", "sortie d'un ancien outil"
+        twins = raw_twins(self.items)
+        for it in self.items:
+            if it.rel in twins and it.status == "en attente":
+                it.status = "ignoré"
+                it.message = f"le RAW {os.path.basename(twins[it.rel])} est corrigé à sa place"
         self.duplicates = 0
         self.cancel = threading.Event()
         self.started = 0.0

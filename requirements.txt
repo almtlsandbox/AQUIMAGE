@@ -3,3 +3,4 @@ numpy>=1.21
 opencv-python>=4.6
 Pillow>=9.1
 imageio-ffmpeg>=0.4.8     # fournit ffmpeg (vidéos avec le son)
+rawpy>=0.18              # lecture des RAW (DNG, CR2, NEF, ARW, RW2, ORF…)

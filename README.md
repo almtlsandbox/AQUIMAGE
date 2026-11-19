@@ -41,7 +41,7 @@ git pull
 AquImage.bat
 ```
 
-Rechargez ensuite la page du navigateur avec Ctrl+F5.
+Si une mise à jour demande un nouveau module, `AquImage.bat` l'installe tout seul au lancement suivant (« Mise à jour des dépendances »). Rechargez ensuite la page du navigateur avec Ctrl+F5.
 
 Si `git pull` signale des modifications locales, en général de simples fins de ligne, écrasez-les avec `git reset --hard origin/main`. Vos photos ne sont pas concernées.
 
@@ -151,6 +151,7 @@ Dans l'atelier :
 | --- | --- |
 | JPEG, PNG, TIFF, WebP, BMP | Même format, ou JPEG / TIFF / PNG au choix |
 | PNG et TIFF 16 bits | 16 bits conservé |
+| RAW : DNG, CR2, CR3, NEF, ARW, RW2, ORF, RAF, PEF… | JPEG, ou TIFF / PNG 16 bits au choix |
 | MP4, MOV, AVI, MKV, M4V, MTS | MP4 H.264 + AAC |
 
 - **Métadonnées :** l'EXIF est conservé (appareil, date, réglages de prise de vue), tout comme le profil de couleur ICC.
@@ -158,7 +159,11 @@ Dans l'atelier :
 - **Chemins :** les noms avec accents, comme « Plongée été », sont gérés.
 - **JPEG :** qualité 92 en 4:2:0 par défaut. Une sortie fait à peu près la taille de l'original.
 
-Le RAW et le HEIC ne sont pas encore lus : convertissez-les d'abord en TIFF 16 bits ou en JPEG.
+- **RAW :** développé en 16 bits par la bibliothèque libre LibRaw (module `rawpy`), avec la balance des blancs de l'appareil, puis corrigé comme les autres photos. Le rouge très faible des photos prises en profondeur y garde plus de nuances qu'en JPEG, d'où moins de bruit et de taches après correction. Pour garder ces 16 bits jusqu'au bout, choisissez TIFF comme format de sortie.
+- **RAW + JPEG :** quand l'appareil enregistre les deux, seul le RAW est corrigé ; le JPEG du même nom est ignoré dans le lot.
+- **Date des RAW :** la date de prise de vue est reportée dans le fichier enregistré (tri des photos, séries). Les autres données EXIF du RAW (appareil, réglages) ne le sont pas.
+
+Le HEIC n'est pas encore lu : convertissez-le d'abord en JPEG.
 
 ## Ligne de commande
 
@@ -219,6 +224,11 @@ Le niveau de bruit règle aussi le retrait du voile, et le contraste obtenu règ
 - **Bruit :** la réduction du bruit reste modeste, elle n'efface pas le grain d'une photo très voilée.
 
 ## Historique
+
+### 1.11.0
+
+- **Photos RAW :** lecture des RAW des appareils (DNG, CR2, CR3, NEF, ARW, RW2, ORF, RAF, PEF…), développés en 16 bits. Dans un lot, un JPEG accompagné de son RAW est ignoré au profit du RAW.
+- **Mise à jour des dépendances :** après un `git pull`, `AquImage.bat` installe tout seul les nouveaux modules nécessaires (ici `rawpy`).
 
 ### 1.10.1
 

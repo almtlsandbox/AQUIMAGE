@@ -730,6 +730,139 @@ def test_server_keep_and_forget(tmp_path, img):
         httpd.shutdown()
 
 
+# ---------------------------------------------------------------- v1.11 : RAW
+class _FakeRaw:
+    """Remplaçant de rawpy pour les tests (rawpy n'est pas toujours installé) :
+    un « RAW » est un fichier dont le contenu commence par une date EXIF, et
+    l'image développée est enregistrée à côté dans _FakeRaw.images."""
+    images = {}
+    calls = []
+
+    class ColorSpace:
+        sRGB = 1
+
+    class ThumbFormat:
+        JPEG = 1
+        BITMAP = 2
+
+    class _Sizes:
+        flip = 0
+
+    def __init__(self, path):
+        self.path = os.path.abspath(path)
+        self.sizes = _FakeRaw._Sizes()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    @classmethod
+    def imread(cls, path):
+        return cls(path)
+
+    def postprocess(self, **kw):
+        _FakeRaw.calls.append(kw)
+        img = _FakeRaw.images[self.path]
+        if kw.get("half_size"):
+            img = img[::2, ::2]
+        return img.copy()
+
+    def extract_thumb(self):
+        class T:
+            pass
+        t = T()
+        t.format = _FakeRaw.ThumbFormat.BITMAP
+        t.data = (_FakeRaw.images[self.path][::4, ::4] >> 8).astype(np.uint8)
+        return t
+
+
+@pytest.fixture
+def fake_rawpy(monkeypatch):
+    import types
+    mod = types.ModuleType("rawpy")
+    for k in ("imread", "ColorSpace", "ThumbFormat"):
+        setattr(mod, k, getattr(_FakeRaw, k))
+    monkeypatch.setitem(sys.modules, "rawpy", mod)
+    _FakeRaw.images.clear()
+    _FakeRaw.calls.clear()
+
+    def make(path, img8, when="2026:10:19 10:00:00"):
+        with open(path, "wb") as f:
+            f.write(b"II*\x00" + b"\x00" * 60 + when.encode() + b"\x00" * 200)
+        _FakeRaw.images[os.path.abspath(path)] = img8.astype(np.uint16) * 257
+    return make
+
+
+def test_raw_formats_listed():
+    for name in ("a.DNG", "b.cr3", "c.NEF", "d.arw", "e.RW2", "f.orf", "g.raf"):
+        assert fileio.is_image(name) and fileio.is_raw(name)
+    assert not fileio.is_raw("x.jpg") and fileio.is_image("x.jpg")
+    assert fileio.output_ext("P1000123.RW2") == ".jpg"
+    assert fileio.output_ext("x.TIF") == ".TIF"
+
+
+def test_raw_read(tmp_path, img, fake_rawpy):
+    p = str(tmp_path / "DSC0001.DNG")
+    fake_rawpy(p, img, "2026:10:19 10:00:04")
+    arr, meta = fileio.read_image(p)
+    assert arr.dtype == np.uint16 and arr.shape == img.shape and meta.bits == 16
+    kw = _FakeRaw.calls[-1]
+    assert kw["use_camera_wb"] and kw["no_auto_bright"] and kw["output_bps"] == 16
+    assert kw["gamma"] == (2.4, 12.92) and not kw["half_size"]
+    small = fileio.read_analysis(p, 200)
+    assert small.dtype == np.uint8 and max(small.shape[:2]) == 200
+    assert _FakeRaw.calls[-1]["half_size"]                  # analyse en demi-résolution
+    th = fileio.thumbnail(p, 100)
+    assert th.dtype == np.uint8 and max(th.shape[:2]) == 100
+    assert fileio.raw_date(p) == "2026:10:19 10:00:04"
+    from aquimage import series
+    t = series.capture_time(p)
+    assert t is not None and t - series.capture_time(p) == 0
+    # Enregistré en JPEG avec la date de prise de vue
+    out = str(tmp_path / "out.jpg")
+    fileio.save_image(out, arr, meta)
+    ex = Image.open(out).getexif()
+    assert ex.get_ifd(0x8769).get(0x9003) == "2026:10:19 10:00:04"
+
+
+def test_raw_missing_module(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "rawpy", None)       # import rawpy -> ImportError
+    p = str(tmp_path / "x.NEF")
+    open(p, "wb").write(b"II*\x00")
+    with pytest.raises(IOError, match="rawpy"):
+        fileio.read_image(p)
+
+
+def test_batch_raw_and_twin(tmp_path, img, fake_rawpy):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    fake_rawpy(str(src / "DSCI0001.DNG"), img)
+    Image.fromarray(img).save(str(src / "DSCI0001.JPG"), quality=90)    # RAW + JPEG
+    Image.fromarray(underwater(seed=2)[0]).save(str(src / "DSCI0002.JPG"), quality=90)
+    job = BatchJob(BatchOptions(src=str(src), dst=str(dst)))
+    by = {i.rel: i for i in job.items}
+    assert by["DSCI0001.JPG"].status == "ignoré" and "DSCI0001.DNG" in by["DSCI0001.JPG"].message
+    job.run()
+    by = {i.rel: i for i in job.items}
+    assert by["DSCI0001.DNG"].status == "ok", by["DSCI0001.DNG"].message
+    assert by["DSCI0002.JPG"].status == "ok"
+    assert sorted(f for f in os.listdir(dst) if not f.endswith(".csv")) == ["DSCI0001.jpg", "DSCI0002.JPG"]
+    out = np.asarray(Image.open(str(dst / "DSCI0001.jpg")))
+    assert out.shape == img.shape and out.dtype == np.uint8
+
+
+def test_server_raw_open_and_save(tmp_path, img, fake_rawpy):
+    from aquimage import server
+    p = str(tmp_path / "P1000001.RW2")
+    fake_rawpy(p, img)
+    sess = server.Session(p)
+    assert sess.kind == "image" and sess.full.dtype == np.uint16
+    res = server.save_output(sess, sess.settings, str(tmp_path / "out"), "same", 90, "")
+    assert res["out"].endswith("P1000001.jpg") and os.path.exists(res["out"])
+
+
 # ---------------------------------------------------------------------------
 # Vraies photos : non-régression de la correction automatique
 # ---------------------------------------------------------------------------

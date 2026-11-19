@@ -66,6 +66,8 @@ def _cmd_image(a) -> int:
     s, diag = autotune.auto_settings(img)
     print("Analyse :", diag)
     out = core.apply_plan(img, core.build_plan(img, s))
+    if fileio.is_raw(a.sortie):
+        raise SystemExit("Un RAW ne peut pas être réécrit : donnez une sortie .jpg, .tif ou .png.")
     fileio.save_image(a.sortie, out, meta, a.qualite)
     print("Enregistrée :", a.sortie)
     return 0

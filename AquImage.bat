@@ -40,8 +40,12 @@ if errorlevel 1 goto err
 "%VPY%" -m pip install --upgrade pip
 "%VPY%" -m pip install -r requirements.txt
 if errorlevel 1 goto err
+copy /y "requirements.txt" "%VENV%\requirements.txt" >nul
 
 :run
+rem Nouvelles dependances apres une mise a jour (git pull) : on les installe
+fc /b "requirements.txt" "%VENV%\requirements.txt" >nul 2>nul
+if errorlevel 1 call :deps
 "%VPY%" -m aquimage %*
 if errorlevel 1 pause
 exit /b
@@ -105,6 +109,12 @@ echo Installation de Python %PYVER% pour cet utilisateur...
 del "%PYEXE%" >nul 2>nul
 call :trypy "%PYDIR%\python.exe"
 if not defined PY echo L'installation de Python a echoue. Journal : %HOMEAQ%\python-install.log
+exit /b
+
+:deps
+echo Mise a jour des dependances d'AquImage...
+"%VPY%" -m pip install -r requirements.txt
+if not errorlevel 1 copy /y "requirements.txt" "%VENV%\requirements.txt" >nul
 exit /b
 
 :err

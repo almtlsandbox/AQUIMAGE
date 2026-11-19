@@ -357,6 +357,7 @@ def save_output(sess: Session, settings: Settings, dest_dir: str, fmt: str,
         tid = start_task(_export_video, sess, settings, dst, sess.rot,
                          sess.crop, list(sess.trim), sess.stab)
         return {"task": tid, "out": dst}
+    ext = fileio.output_ext(sess.path)
     if fmt in ("jpg", "png", "tif"):
         ext = "." + fmt
     dst = os.path.join(dest_dir, stem + suffix + ext)
