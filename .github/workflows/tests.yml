@@ -1,7 +1,7 @@
 # Tests automatiques d'AquImage, à chaque envoi sur main et à chaque pull request.
-#  - tests : la suite pytest (dont le banc sur 32 vraies photos) sous Windows et
-#    Linux, avec Python 3.9 (version minimale) et 3.12 (version installée par le
-#    lanceur quand Python est absent).
+#  - tests : la suite pytest (dont le banc sur 32 vraies photos) sous Windows,
+#    avec Python 3.9 (version minimale) et 3.12 (version installée par le
+#    lanceur quand Python est absent), et sous Linux avec Python 3.12.
 #  - lanceur : AquImage.bat sur un Windows neuf, comme au premier lancement :
 #    création de l'environnement, installation des dépendances, démarrage.
 name: Tests
@@ -29,6 +29,11 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
         python: ["3.9", "3.12"]
+        exclude:
+          # Python 3.9 (fin de vie) n'existe plus pour le Linux récent des
+          # runners ; il reste testé sous Windows, là où il sert.
+          - os: ubuntu-latest
+            python: "3.9"
     env:
       PYTHONIOENCODING: utf-8
     steps:

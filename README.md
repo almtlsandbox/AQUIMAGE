@@ -422,6 +422,8 @@ Première version : moteur de correction, lot, atelier, vidéos, interface local
 
 ## Développement
 
+Les tests tournent automatiquement sur GitHub (onglet **Actions**) à chaque envoi : sous Windows avec Python 3.9 et 3.12, sous Linux avec Python 3.12, plus un premier lancement complet de `AquImage.bat` sur un Windows neuf.
+
 ```bat
 %LOCALAPPDATA%\AquImage\venv\Scripts\python -m pip install -r requirements-dev.txt
 %LOCALAPPDATA%\AquImage\venv\Scripts\python -m pytest tests
