@@ -1,0 +1,67 @@
+# Tests automatiques d'AquImage, à chaque envoi sur main et à chaque pull request.
+#  - tests : la suite pytest (dont le banc sur 32 vraies photos) sous Windows et
+#    Linux, avec Python 3.9 (version minimale) et 3.12 (version installée par le
+#    lanceur quand Python est absent).
+#  - lanceur : AquImage.bat sur un Windows neuf, comme au premier lancement :
+#    création de l'environnement, installation des dépendances, démarrage.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: pytest · ${{ matrix.os }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.9", "3.12"]
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Dépendances
+        run: python -m pip install -r requirements-dev.txt
+      - name: Lecture des RAW disponible
+        run: python -c "import rawpy; print('rawpy', rawpy.__version__, 'LibRaw', rawpy.libraw_version)"
+      - name: Tests
+        run: python -m pytest -q tests
+
+  launcher:
+    name: AquImage.bat · premier lancement
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Premier lancement (environnement et dépendances)
+        shell: cmd
+        run: call AquImage.bat --version
+      - name: Environnement créé, dépendances installées
+        shell: cmd
+        run: |
+          "%LOCALAPPDATA%\AquImage\venv\Scripts\python.exe" -c "import aquimage, numpy, cv2, PIL, imageio_ffmpeg, rawpy; print('AquImage', aquimage.__version__)"
+          if not exist "%LOCALAPPDATA%\AquImage\venv\requirements.txt" exit /b 1
+      - name: Lancement suivant (rien à réinstaller)
+        shell: cmd
+        run: call AquImage.bat --version
